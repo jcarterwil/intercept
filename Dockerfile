@@ -236,6 +236,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
+# Install rtlamr (smart meter decoder)
+RUN if [ -f /app/bin/rtlamr ]; then cp /app/bin/rtlamr /usr/bin/ && chmod +x /usr/bin/rtlamr; fi
+
 # Create data directory for persistence
 RUN mkdir -p /app/data /app/data/weather_sat
 
