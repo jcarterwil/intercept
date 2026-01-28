@@ -15,6 +15,9 @@ from utils.gps import (
     start_gpsd,
     stop_gps,
     get_current_position,
+    get_manual_position,
+    set_manual_position,
+    clear_manual_position,
     GPSPosition,
 )
 
@@ -184,3 +187,102 @@ def stream_gps():
     response.headers['X-Accel-Buffering'] = 'no'
     response.headers['Connection'] = 'keep-alive'
     return response
+
+
+@gps_bp.route('/manual', methods=['GET'])
+def get_manual():
+    """
+    Get the manually configured position.
+
+    Returns the fixed position if one has been set, otherwise returns null.
+    Manual position is used as fallback when no GPS hardware is available.
+
+    Returns:
+        JSON with manual position or null.
+    """
+    position = get_manual_position()
+
+    if position:
+        return jsonify({
+            'status': 'ok',
+            'position': position.to_dict()
+        })
+    else:
+        return jsonify({
+            'status': 'ok',
+            'position': None,
+            'message': 'No manual position configured'
+        })
+
+
+@gps_bp.route('/manual', methods=['POST'])
+def set_manual():
+    """
+    Set a manual/fixed GPS position.
+
+    This position will be used when no GPS hardware (gpsd) is available.
+    The position is persisted to the database and survives restarts.
+
+    JSON body:
+        {
+            "latitude": 42.3314,     // Required: -90 to 90
+            "longitude": -83.0458,   // Required: -180 to 180
+            "altitude": 200          // Optional: meters above sea level
+        }
+
+    Returns:
+        JSON with the saved position.
+    """
+    data = request.get_json(silent=True) or {}
+
+    latitude = data.get('latitude')
+    longitude = data.get('longitude')
+    altitude = data.get('altitude')
+
+    if latitude is None or longitude is None:
+        return jsonify({
+            'status': 'error',
+            'message': 'latitude and longitude are required'
+        }), 400
+
+    try:
+        latitude = float(latitude)
+        longitude = float(longitude)
+        if altitude is not None:
+            altitude = float(altitude)
+    except (TypeError, ValueError) as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Invalid coordinate value: {e}'
+        }), 400
+
+    try:
+        position = set_manual_position(latitude, longitude, altitude)
+        return jsonify({
+            'status': 'ok',
+            'message': 'Manual position saved',
+            'position': position.to_dict()
+        })
+    except ValueError as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 400
+
+
+@gps_bp.route('/manual', methods=['DELETE'])
+def delete_manual():
+    """
+    Clear the manual position.
+
+    After clearing, get_current_position() will only return data from
+    GPS hardware (gpsd).
+
+    Returns:
+        JSON confirmation.
+    """
+    clear_manual_position()
+    return jsonify({
+        'status': 'ok',
+        'message': 'Manual position cleared'
+    })

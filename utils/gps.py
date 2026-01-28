@@ -325,8 +325,140 @@ def stop_gps() -> None:
 
 
 def get_current_position() -> Optional[GPSPosition]:
-    """Get the current GPS position from the global client."""
+    """
+    Get the current GPS position.
+
+    Returns position from gpsd if available, otherwise falls back to
+    manual position if one has been set.
+    """
+    # First try gpsd
     client = get_gps_reader()
-    if client:
+    if client and client.position:
         return client.position
-    return None
+
+    # Fall back to manual position
+    return get_manual_position()
+
+
+# Manual position storage
+_manual_position: Optional[GPSPosition] = None
+_manual_lock = threading.Lock()
+
+
+# Default location: 355 East Bay St, Harbor Springs, MI
+DEFAULT_LATITUDE = 45.4299459
+DEFAULT_LONGITUDE = -84.9848950
+DEFAULT_ALTITUDE = 180.0  # meters (Lake Michigan elevation)
+
+
+def get_manual_position() -> Optional[GPSPosition]:
+    """Get the manually configured position."""
+    global _manual_position
+
+    with _manual_lock:
+        if _manual_position:
+            return _manual_position
+
+    # Try loading from database settings
+    try:
+        from utils.database import get_setting
+        lat = get_setting('location.latitude')
+        lon = get_setting('location.longitude')
+
+        if lat is not None and lon is not None:
+            alt = get_setting('location.altitude')
+            pos = GPSPosition(
+                latitude=float(lat),
+                longitude=float(lon),
+                altitude=float(alt) if alt is not None else None,
+                fix_quality=1,  # Manual fix
+                device='manual',
+            )
+            with _manual_lock:
+                _manual_position = pos
+            return pos
+    except Exception as e:
+        logger.debug(f"Could not load manual position from database: {e}")
+
+    # Return default location if nothing configured
+    return GPSPosition(
+        latitude=DEFAULT_LATITUDE,
+        longitude=DEFAULT_LONGITUDE,
+        altitude=DEFAULT_ALTITUDE,
+        fix_quality=1,  # Manual fix
+        device='default',
+    )
+
+
+def set_manual_position(
+    latitude: float,
+    longitude: float,
+    altitude: Optional[float] = None
+) -> GPSPosition:
+    """
+    Set a manual/fixed GPS position.
+
+    This position will be used when no gpsd hardware is available.
+    The position is persisted to the database.
+
+    Args:
+        latitude: Latitude in decimal degrees (-90 to 90)
+        longitude: Longitude in decimal degrees (-180 to 180)
+        altitude: Optional altitude in meters
+
+    Returns:
+        The created GPSPosition object
+
+    Raises:
+        ValueError: If coordinates are out of range
+    """
+    global _manual_position
+
+    # Validate coordinates
+    if not -90 <= latitude <= 90:
+        raise ValueError(f"Latitude must be between -90 and 90, got {latitude}")
+    if not -180 <= longitude <= 180:
+        raise ValueError(f"Longitude must be between -180 and 180, got {longitude}")
+
+    position = GPSPosition(
+        latitude=latitude,
+        longitude=longitude,
+        altitude=altitude,
+        fix_quality=1,  # Manual fix
+        device='manual',
+        timestamp=datetime.utcnow(),
+    )
+
+    # Store in memory
+    with _manual_lock:
+        _manual_position = position
+
+    # Persist to database
+    try:
+        from utils.database import set_setting
+        set_setting('location.latitude', latitude)
+        set_setting('location.longitude', longitude)
+        if altitude is not None:
+            set_setting('location.altitude', altitude)
+        logger.info(f"Manual position set: {latitude}, {longitude}")
+    except Exception as e:
+        logger.error(f"Failed to persist manual position: {e}")
+
+    return position
+
+
+def clear_manual_position() -> None:
+    """Clear the manual position."""
+    global _manual_position
+
+    with _manual_lock:
+        _manual_position = None
+
+    try:
+        from utils.database import delete_setting
+        delete_setting('location.latitude')
+        delete_setting('location.longitude')
+        delete_setting('location.altitude')
+        logger.info("Manual position cleared")
+    except Exception as e:
+        logger.debug(f"Could not clear manual position from database: {e}")
