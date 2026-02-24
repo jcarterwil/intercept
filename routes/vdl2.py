@@ -13,7 +13,7 @@ import subprocess
 import threading
 import time
 from datetime import datetime
-from typing import Generator
+from typing import Any, Generator
 
 from flask import Blueprint, jsonify, request, Response
 
@@ -79,7 +79,7 @@ def stream_vdl2_output(process: subprocess.Popen, is_text_mode: bool = False) ->
                 data['type'] = 'vdl2'
                 data['timestamp'] = datetime.utcnow().isoformat() + 'Z'
 
-                # Enrich embedded ACARS payload with translated label
+                # Enrich with translated ACARS label at top level (consistent with ACARS route)
                 try:
                     vdl2_inner = data.get('vdl2', data)
                     acars_payload = (vdl2_inner.get('avlc') or {}).get('acars')
@@ -89,9 +89,9 @@ def stream_vdl2_output(process: subprocess.Popen, is_text_mode: bool = False) ->
                             'label': acars_payload.get('label'),
                             'text': acars_payload.get('msg_text', ''),
                         })
-                        acars_payload['label_description'] = translation['label_description']
-                        acars_payload['message_type'] = translation['message_type']
-                        acars_payload['parsed'] = translation['parsed']
+                        data['label_description'] = translation['label_description']
+                        data['message_type'] = translation['message_type']
+                        data['parsed'] = translation['parsed']
                 except Exception:
                     pass
 
@@ -399,10 +399,11 @@ def get_vdl2_messages() -> Response:
 @vdl2_bp.route('/clear', methods=['POST'])
 def clear_vdl2_messages() -> Response:
     """Clear stored VDL2 messages and reset counter."""
-    global vdl2_message_count
+    global vdl2_message_count, vdl2_last_message_time
     from utils.flight_correlator import get_flight_correlator
     get_flight_correlator().clear_vdl2()
     vdl2_message_count = 0
+    vdl2_last_message_time = None
     return jsonify({'status': 'cleared'})
 
 

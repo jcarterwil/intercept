@@ -13,7 +13,7 @@ import subprocess
 import threading
 import time
 from datetime import datetime
-from typing import Generator
+from typing import Any, Generator
 
 from flask import Blueprint, jsonify, request, Response
 
@@ -35,9 +35,11 @@ acars_bp = Blueprint('acars', __name__, url_prefix='/acars')
 
 # Default VHF ACARS frequencies (MHz) - North America primary
 DEFAULT_ACARS_FREQUENCIES = [
-    '131.550',  # North America primary
+    '131.550',  # Primary worldwide / North America
     '130.025',  # North America secondary
     '129.125',  # North America tertiary
+    '131.725',  # North America (major US carriers)
+    '131.825',  # North America (major US carriers)
 ]
 
 # Message counter for statistics
@@ -456,10 +458,11 @@ def get_acars_messages() -> Response:
 @acars_bp.route('/clear', methods=['POST'])
 def clear_acars_messages() -> Response:
     """Clear stored ACARS messages and reset counter."""
-    global acars_message_count
+    global acars_message_count, acars_last_message_time
     from utils.flight_correlator import get_flight_correlator
     get_flight_correlator().clear_acars()
     acars_message_count = 0
+    acars_last_message_time = None
     return jsonify({'status': 'cleared'})
 
 
@@ -469,7 +472,7 @@ def get_frequencies() -> Response:
     return jsonify({
         'default': DEFAULT_ACARS_FREQUENCIES,
         'regions': {
-            'north_america': ['131.550', '130.025', '129.125'],
+            'north_america': ['131.550', '130.025', '129.125', '131.725', '131.825'],
             'europe': ['131.525', '131.725', '131.550'],
             'asia_pacific': ['131.550', '131.450'],
         }
