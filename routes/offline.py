@@ -11,8 +11,9 @@ offline_bp = Blueprint('offline', __name__, url_prefix='/offline')
 # Default offline settings
 OFFLINE_DEFAULTS = {
     'offline.enabled': False,
-    'offline.assets_source': 'cdn',
-    'offline.fonts_source': 'cdn',
+    # Default to bundled assets/fonts to avoid third-party CDN privacy blocks.
+    'offline.assets_source': 'local',
+    'offline.fonts_source': 'local',
     'offline.tile_provider': 'cartodb_dark_cyan',
     'offline.tile_server_url': ''
 }

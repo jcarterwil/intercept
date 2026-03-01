@@ -1,6 +1,8 @@
 # INTERCEPT - Signal Intelligence Platform
 # Docker Compose configuration for easy deployment
 #
+# Uses gunicorn + gevent production server via start.sh (handles concurrent SSE/WebSocket)
+#
 # Basic usage (build locally):
 #   docker compose --profile basic up -d --build
 #
@@ -18,6 +20,8 @@ services:
     container_name: intercept
     ports:
       - "5050:5050"
+      # Uncomment for HTTPS support (set INTERCEPT_HTTPS=true below)
+      # - "5443:5443"
     # Privileged mode required for USB SDR device access
     privileged: true
     # USB device mapping for all USB devices
@@ -29,9 +33,13 @@ services:
       # Optional: mount logs directory
       # - ./logs:/app/logs
     environment:
+      - TZ=${TZ:-UTC}
       - INTERCEPT_HOST=0.0.0.0
       - INTERCEPT_PORT=5050
       - INTERCEPT_LOG_LEVEL=INFO
+      # HTTPS support (auto-generates self-signed cert)
+      # - INTERCEPT_HTTPS=true
+      # - INTERCEPT_PORT=5443
       # ADS-B history is disabled by default
       # To enable, use: docker compose --profile history up -d
       # - INTERCEPT_ADSB_HISTORY_ENABLED=true
@@ -70,6 +78,8 @@ services:
       - adsb_db
     ports:
       - "5050:5050"
+      # Uncomment for HTTPS support (set INTERCEPT_HTTPS=true below)
+      # - "5443:5443"
     # Privileged mode required for USB SDR device access
     privileged: true
     # USB device mapping for all USB devices
@@ -78,9 +88,13 @@ services:
     volumes:
       - ./data:/app/data
     environment:
+      - TZ=${TZ:-UTC}
       - INTERCEPT_HOST=0.0.0.0
       - INTERCEPT_PORT=5050
       - INTERCEPT_LOG_LEVEL=INFO
+      # HTTPS support (auto-generates self-signed cert)
+      # - INTERCEPT_HTTPS=true
+      # - INTERCEPT_PORT=5443
       - INTERCEPT_ADSB_HISTORY_ENABLED=true
       - INTERCEPT_ADSB_DB_HOST=adsb_db
       - INTERCEPT_ADSB_DB_PORT=5432
@@ -108,6 +122,7 @@ services:
     profiles:
       - history
     environment:
+      - TZ=${TZ:-UTC}
       - POSTGRES_DB=intercept_adsb
       - POSTGRES_USER=intercept
       - POSTGRES_PASSWORD=intercept

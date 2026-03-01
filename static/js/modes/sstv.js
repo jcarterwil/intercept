@@ -17,9 +17,11 @@ const SSTV = (function() {
     let issUpdateInterval = null;
     let countdownInterval = null;
     let nextPassData = null;
+    let pendingMapInvalidate = false;
 
     // ISS frequency
     const ISS_FREQ = 145.800;
+    const ISS_MODULATION = 'fm';
 
     // Signal scope state
     let sstvScopeCtx = null;
@@ -44,6 +46,22 @@ const SSTV = (function() {
         initMap();
         startIssTracking();
         startCountdown();
+        // Ensure Leaflet recomputes dimensions after the SSTV pane becomes visible.
+        setTimeout(() => invalidateMap(), 80);
+        setTimeout(() => invalidateMap(), 260);
+    }
+
+    function isMapContainerVisible() {
+        if (!issMap || typeof issMap.getContainer !== 'function') return false;
+        const container = issMap.getContainer();
+        if (!container) return false;
+        if (container.offsetWidth <= 0 || container.offsetHeight <= 0) return false;
+        if (container.style && container.style.display === 'none') return false;
+        if (typeof window.getComputedStyle === 'function') {
+            const style = window.getComputedStyle(container);
+            if (style.display === 'none' || style.visibility === 'hidden') return false;
+        }
+        return true;
     }
 
     /**
@@ -219,6 +237,14 @@ const SSTV = (function() {
             opacity: 0.6,
             dashArray: '5, 5'
         }).addTo(issMap);
+
+        issMap.on('resize moveend zoomend', () => {
+            if (pendingMapInvalidate) invalidateMap();
+        });
+
+        // Initial layout passes for first-time mode load.
+        setTimeout(() => invalidateMap(), 40);
+        setTimeout(() => invalidateMap(), 180);
     }
 
     /**
@@ -430,6 +456,7 @@ const SSTV = (function() {
      */
     function updateMap() {
         if (!issMap || !issPosition) return;
+        if (pendingMapInvalidate) invalidateMap();
 
         const lat = issPosition.lat;
         const lon = issPosition.lon;
@@ -489,8 +516,12 @@ const SSTV = (function() {
             issTrackLine.setLatLngs(segments.length > 0 ? segments : []);
         }
 
-        // Pan map to follow ISS
-        issMap.panTo([lat, lon], { animate: true, duration: 0.5 });
+        // Pan map to follow ISS only when the map pane is currently renderable.
+        if (isMapContainerVisible()) {
+            issMap.panTo([lat, lon], { animate: true, duration: 0.5 });
+        } else {
+            pendingMapInvalidate = true;
+        }
     }
 
     /**
@@ -544,7 +575,7 @@ const SSTV = (function() {
             const response = await fetch('/sstv/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ frequency, device })
+                body: JSON.stringify({ frequency, modulation: ISS_MODULATION, device })
             });
 
             const data = await response.json();
@@ -554,9 +585,11 @@ const SSTV = (function() {
                 if (typeof reserveDevice === 'function') {
                     reserveDevice(device, 'sstv');
                 }
-                updateStatusUI('listening', `${frequency} MHz`);
+                const tunedFrequency = Number(data.frequency || frequency);
+                const modulationText = String(data.modulation || ISS_MODULATION).toUpperCase();
+                updateStatusUI('listening', `${tunedFrequency.toFixed(3)} MHz ${modulationText}`);
                 startStream();
-                showNotification('SSTV', `Listening on ${frequency} MHz`);
+                showNotification('SSTV', `Listening on ${tunedFrequency.toFixed(3)} MHz ${modulationText}`);
             } else {
                 updateStatusUI('idle', 'Start failed');
                 showStatusMessage(data.message || 'Failed to start decoder', 'error');
@@ -1310,6 +1343,20 @@ const SSTV = (function() {
         }
     }
 
+    /**
+     * Invalidate ISS map size after pane/layout changes.
+     */
+    function invalidateMap() {
+        if (!issMap) return false;
+        if (!isMapContainerVisible()) {
+            pendingMapInvalidate = true;
+            return false;
+        }
+        issMap.invalidateSize({ pan: false, animate: false });
+        pendingMapInvalidate = false;
+        return true;
+    }
+
     // Public API
     return {
         init,
@@ -1325,8 +1372,22 @@ const SSTV = (function() {
         useGPS,
         updateTLE,
         stopIssTracking,
-        stopCountdown
+        stopCountdown,
+        invalidateMap,
+        destroy
     };
+
+    /**
+     * Destroy — close SSE stream and clear ISS tracking/countdown timers for clean mode switching.
+     */
+    function destroy() {
+        if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+        }
+        stopIssTracking();
+        stopCountdown();
+    }
 })();
 
 // Initialize when DOM is ready (will be called by selectMode)

@@ -2,7 +2,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.9+-blue.svg" alt="Python 3.9+">
-  <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License">
+  <img src="https://img.shields.io/badge/license-Apache--2.0-green.svg" alt="Apache 2.0 License">
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg" alt="Platform">
 </p>
 
@@ -32,6 +32,7 @@ Support the developer of this open-source project
 - **Aircraft Tracking** - ADS-B via dump1090 with real-time map and radar
 - **Vessel Tracking** - AIS ship tracking with VHF DSC distress monitoring
 - **ACARS Messaging** - Aircraft datalink messages via acarsdec
+- **VDL2** - VHF Data Link Mode 2 aircraft datalink decoding via dumpvdl2
 - **Listening Post** - Wideband frequency scanner with real-time audio monitoring
 - **Weather Satellites** - NOAA APT and Meteor LRPT image decoding via SatDump with auto-scheduler
 - **WebSDR** - Remote HF/shortwave listening via KiwiSDR network
@@ -39,29 +40,58 @@ Support the developer of this open-source project
 - **HF SSTV** - Terrestrial SSTV on shortwave frequencies (80m-10m, VHF, UHF)
 - **APRS** - Amateur packet radio position reports and telemetry via direwolf
 - **Satellite Tracking** - Pass prediction with polar plot and ground track map
-- **Utility Meters** - Electric, gas, and water meter reading via rtl_amr
+- **Utility Meters** - Electric, gas, and water meter reading via rtlamr
 - **ADS-B History** - Persistent aircraft history with reporting dashboard (Postgres optional)
 - **WiFi Scanning** - Monitor mode reconnaissance via aircrack-ng
 - **Bluetooth Scanning** - Device discovery and tracker detection (with Ubertooth support)
+- **BT Locate** - SAR Bluetooth device location with GPS-tagged signal trail mapping and proximity alerts
+- **GPS** - Real-time GPS position tracking with live map, speed, altitude, and satellite info
 - **TSCM** - Counter-surveillance with RF baseline comparison and threat detection
 - **Meshtastic** - LoRa mesh network integration
+- **Space Weather** - Real-time solar and geomagnetic data from NOAA SWPC, NASA SDO, and HamQSL (no SDR required)
 - **Spy Stations** - Number stations and diplomatic HF network database
 - **Remote Agents** - Distributed SIGINT with remote sensor nodes
 - **Offline Mode** - Bundled assets for air-gapped/field deployments
 
 ---
 
-## Installation / Debian / Ubuntu / MacOS
+## CW / Morse Decoder Notes
 
-```
+Live backend:
+- Uses `rtl_fm` piped into `multimon-ng` (`MORSE_CW`) for real-time decode.
+
+Recommended baseline settings:
+- **Tone**: `700 Hz`
+- **Bandwidth**: `200 Hz` (use `100 Hz` for crowded bands, `400 Hz` for drifting signals)
+- **Threshold Mode**: `Auto`
+- **WPM Mode**: `Auto`
+
+Auto Tone Track behavior:
+- Continuously measures nearby tone energy around the configured CW pitch.
+- Steers the detector toward the strongest valid CW tone when signal-to-noise is sufficient.
+- Use **Hold Tone Lock** to freeze tracking once the desired signal is centered.
+
+Troubleshooting (no decode / noisy decode):
+- Confirm demod path is **USB/CW-compatible** and frequency is tuned correctly.
+- If multiple SDRs are connected and the selected one has no PCM output, Morse startup now auto-tries other detected SDR devices and reports the active device/serial in status logs.
+- Match **tone** and **bandwidth** to the actual sidetone/pitch.
+- Try **Threshold Auto** first; if needed, switch to manual threshold and recalibrate.
+- Use **Reset/Calibrate** after major frequency or band condition changes.
+- Raise **Minimum Signal Gate** to suppress random noise keying.
+
+---
+
+## Installation / Debian / Ubuntu / MacOS
 
 **1. Clone and run:**
 ```bash
 git clone https://github.com/smittix/intercept.git
 cd intercept
 ./setup.sh
-sudo -E venv/bin/python intercept.py
+sudo ./start.sh
 ```
+
+> **Production vs Dev server:** `start.sh` auto-detects gunicorn + gevent and runs a production server with cooperative greenlets — handles multiple SSE/WebSocket clients without blocking. Falls back to Flask dev server if gunicorn is not installed. For quick local development, you can still use `sudo -E venv/bin/python intercept.py` directly.
 
 ### Docker
 
@@ -146,7 +176,7 @@ Set these as environment variables for either local installs or Docker:
 ```bash
 INTERCEPT_ADSB_AUTO_START=true \
 INTERCEPT_SHARED_OBSERVER_LOCATION=false \
-python app.py
+sudo ./start.sh
 ```
 
 **Docker example (.env)**
@@ -168,7 +198,7 @@ Then open **/adsb/history** for the reporting dashboard.
 
 After starting, open **http://localhost:5050** in your browser. The username and password is <b>admin</b>:<b>admin</b> 
 
-The credentials can be change in the ADMIN_USERNAME & ADMIN_PASSWORD variables in config.py
+The credentials can be changed in the ADMIN_USERNAME & ADMIN_PASSWORD variables in config.py
 
 ---
 
@@ -226,7 +256,7 @@ This project was developed using AI as a coding partner, combining human directi
 
 ## License
 
-MIT License - see [LICENSE](LICENSE)
+Apache 2.0 License - see [LICENSE](LICENSE)
 
 ## Author
 
@@ -241,12 +271,14 @@ Created by **smittix** - [GitHub](https://github.com/smittix)
 [AIS-catcher](https://github.com/jvde-github/AIS-catcher) |
 [acarsdec](https://github.com/TLeconte/acarsdec) |
 [direwolf](https://github.com/wb2osz/direwolf) |
-[rtl_amr](https://github.com/bemasher/rtlamr) |
+[rtlamr](https://github.com/bemasher/rtlamr) |
+[dumpvdl2](https://github.com/szpajder/dumpvdl2) |
 [aircrack-ng](https://www.aircrack-ng.org/) |
 [Leaflet.js](https://leafletjs.com/) |
 [SatDump](https://github.com/SatDump/SatDump) |
 [Celestrak](https://celestrak.org/) |
 [Priyom.org](https://priyom.org/)
+
 
 
 

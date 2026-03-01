@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from utils.dependencies import get_tool_path
+
 from .base import CommandBuilder, SDRCapabilities, SDRDevice, SDRType
 
 
@@ -70,8 +72,9 @@ class HackRFCommandBuilder(CommandBuilder):
         """
         device_str = self._build_device_string(device)
 
+        rx_fm_path = get_tool_path('rx_fm') or 'rx_fm'
         cmd = [
-            'rx_fm',
+            rx_fm_path,
             '-d', device_str,
             '-f', f'{frequency_mhz}M',
             '-M', modulation,
@@ -203,8 +206,9 @@ class HackRFCommandBuilder(CommandBuilder):
         device_str = self._build_device_string(device)
         freq_hz = int(frequency_mhz * 1e6)
 
+        rx_sdr_path = get_tool_path('rx_sdr') or 'rx_sdr'
         cmd = [
-            'rx_sdr',
+            rx_sdr_path,
             '-d', device_str,
             '-f', str(freq_hz),
             '-s', str(sample_rate),

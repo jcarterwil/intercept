@@ -6,8 +6,26 @@ from typing import Any
 
 from utils.alerts import get_alert_manager
 from utils.recording import get_recording_manager
+from utils.temporal_patterns import get_pattern_detector
 
 IGNORE_TYPES = {'keepalive', 'ping'}
+
+
+DEVICE_ID_FIELDS = (
+    'device_id',
+    'id',
+    'mac',
+    'mac_address',
+    'address',
+    'bssid',
+    'station_mac',
+    'client_mac',
+    'icao',
+    'callsign',
+    'mmsi',
+    'uuid',
+    'hash',
+)
 
 
 def process_event(mode: str, event: dict | Any, event_type: str | None = None) -> None:
@@ -15,6 +33,14 @@ def process_event(mode: str, event: dict | Any, event_type: str | None = None) -
         return
     if not isinstance(event, dict):
         return
+
+    device_id = _extract_device_id(event)
+    if device_id:
+        try:
+            get_pattern_detector().record_event(device_id=device_id, mode=mode)
+        except Exception:
+            # Pattern tracking should not break ingest pipeline
+            pass
 
     try:
         get_recording_manager().record_event(mode, event, event_type)
@@ -27,3 +53,21 @@ def process_event(mode: str, event: dict | Any, event_type: str | None = None) -
     except Exception:
         # Alert failures should never break streaming
         pass
+
+def _extract_device_id(event: dict) -> str | None:
+    for field in DEVICE_ID_FIELDS:
+        value = event.get(field)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+
+    nested_candidates = ('target', 'device', 'source', 'aircraft', 'vessel')
+    for key in nested_candidates:
+        nested = event.get(key)
+        if isinstance(nested, dict):
+            nested_id = _extract_device_id(nested)
+            if nested_id:
+                return nested_id
+    return None

@@ -1,7 +1,7 @@
 /**
  * Weather Satellite Mode
  * NOAA APT and Meteor LRPT decoder interface with auto-scheduler,
- * polar plot, ground track map, countdown, and timeline.
+ * polar plot, styled real-world map, countdown, and timeline.
  */
 
 const WeatherSat = (function() {
@@ -9,6 +9,7 @@ const WeatherSat = (function() {
     let isRunning = false;
     let eventSource = null;
     let images = [];
+    let allPasses = [];
     let passes = [];
     let selectedPassIndex = -1;
     let currentSatellite = null;
@@ -16,12 +17,16 @@ const WeatherSat = (function() {
     let schedulerEnabled = false;
     let groundMap = null;
     let groundTrackLayer = null;
+    let groundOverlayLayer = null;
+    let groundGridLayer = null;
+    let satCrosshairMarker = null;
     let observerMarker = null;
     let consoleEntries = [];
     let consoleCollapsed = false;
     let currentPhase = 'idle';
     let consoleAutoHideTimer = null;
     let currentModalFilename = null;
+    let locationListenersAttached = false;
 
     /**
      * Initialize the Weather Satellite mode
@@ -34,6 +39,73 @@ const WeatherSat = (function() {
         startCountdownTimer();
         checkSchedulerStatus();
         initGroundMap();
+
+        // Re-filter passes when satellite selection changes
+        const satSelect = document.getElementById('weatherSatSelect');
+        if (satSelect) {
+            satSelect.addEventListener('change', () => {
+                applyPassFilter();
+            });
+        }
+    }
+
+    /**
+     * Get passes filtered by the currently selected satellite.
+     */
+    function getFilteredPasses() {
+        const satSelect = document.getElementById('weatherSatSelect');
+        const selected = satSelect?.value;
+        if (!selected) return passes;
+        return passes.filter(p => p.satellite === selected);
+    }
+
+    /**
+     * Re-render passes, timeline, countdown and polar plot using filtered list.
+     */
+    function applyPassFilter() {
+        const filtered = getFilteredPasses();
+        selectedPassIndex = -1;
+        renderPasses(filtered);
+        renderTimeline(filtered);
+        updateCountdownFromPasses();
+        if (filtered.length > 0) {
+            selectPass(0);
+        } else {
+            updateGroundTrack(null);
+        }
+    }
+
+    /**
+     * Get observer coordinates from shared location or local storage.
+     */
+    function getObserverCoords() {
+        let lat;
+        let lon;
+
+        if (window.ObserverLocation && ObserverLocation.isSharedEnabled()) {
+            const shared = ObserverLocation.getShared();
+            lat = Number(shared?.lat);
+            lon = Number(shared?.lon);
+        } else {
+            lat = Number(localStorage.getItem('observerLat'));
+            lon = Number(localStorage.getItem('observerLon'));
+        }
+
+        if (!isFinite(lat) || !isFinite(lon)) return null;
+        if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+        return { lat, lon };
+    }
+
+    /**
+     * Center the ground map on current observer coordinates when available.
+     */
+    function centerGroundMapOnObserver(zoom = 1) {
+        if (!groundMap) return;
+        const observer = getObserverCoords();
+        if (!observer) return;
+        const lat = Math.max(-85, Math.min(85, observer.lat));
+        const lon = normalizeLon(observer.lon);
+        groundMap.setView([lat, lon], zoom, { animate: false });
     }
 
     /**
@@ -54,8 +126,15 @@ const WeatherSat = (function() {
         if (latInput && storedLat) latInput.value = storedLat;
         if (lonInput && storedLon) lonInput.value = storedLon;
 
-        if (latInput) latInput.addEventListener('change', saveLocationFromInputs);
-        if (lonInput) lonInput.addEventListener('change', saveLocationFromInputs);
+        // Only attach listeners once — re-calling init() on mode switch must not
+        // accumulate duplicate listeners that fire loadPasses() multiple times.
+        if (!locationListenersAttached) {
+            if (latInput) latInput.addEventListener('change', saveLocationFromInputs);
+            if (lonInput) lonInput.addEventListener('change', saveLocationFromInputs);
+            const satSelect = document.getElementById('weatherSatSelect');
+            if (satSelect) satSelect.addEventListener('change', applyPassFilter);
+            locationListenersAttached = true;
+        }
     }
 
     /**
@@ -77,6 +156,7 @@ const WeatherSat = (function() {
                 localStorage.setItem('observerLon', lon.toString());
             }
             loadPasses();
+            centerGroundMapOnObserver(1);
         }
     }
 
@@ -115,6 +195,7 @@ const WeatherSat = (function() {
                 btn.disabled = false;
                 showNotification('Weather Sat', 'Location updated');
                 loadPasses();
+                centerGroundMapOnObserver(1);
             },
             (err) => {
                 btn.innerHTML = originalText;
@@ -172,15 +253,26 @@ const WeatherSat = (function() {
         updateStatusUI('connecting', 'Starting...');
 
         try {
+            const config = {
+                satellite,
+                device,
+                gain,
+                bias_t: biasT,
+            };
+
+            // Add rtl_tcp params if using remote SDR
+            if (typeof getRemoteSDRConfig === 'function') {
+                var remoteConfig = getRemoteSDRConfig();
+                if (remoteConfig) {
+                    config.rtl_tcp_host = remoteConfig.host;
+                    config.rtl_tcp_port = remoteConfig.port;
+                }
+            }
+
             const response = await fetch('/weather-sat/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    satellite,
-                    device,
-                    gain,
-                    bias_t: biasT,
-                })
+                body: JSON.stringify(config)
             });
 
             const data = await response.json();
@@ -218,10 +310,13 @@ const WeatherSat = (function() {
      * Stop capture
      */
     async function stop() {
+        // Optimistically update UI immediately so stop feels responsive,
+        // even if the server takes time to terminate the process.
+        isRunning = false;
+        stopStream();
+        updateStatusUI('idle', 'Stopping...');
         try {
             await fetch('/weather-sat/stop', { method: 'POST' });
-            isRunning = false;
-            stopStream();
             updateStatusUI('idle', 'Stopped');
             showNotification('Weather Sat', 'Capture stopped');
         } catch (err) {
@@ -399,16 +494,20 @@ const WeatherSat = (function() {
 
                 addConsoleEntry('Capture complete', 'signal');
                 updatePhaseIndicator('complete');
+                if (consoleAutoHideTimer) clearTimeout(consoleAutoHideTimer);
                 consoleAutoHideTimer = setTimeout(() => showConsole(false), 30000);
             }
 
         } else if (data.status === 'error') {
+            isRunning = false;
+            if (!schedulerEnabled) stopStream();
             updateStatusUI('idle', 'Error');
             showNotification('Weather Sat', data.message || 'Capture error');
             if (captureStatus) captureStatus.classList.remove('active');
 
             if (data.message) addConsoleEntry(data.message, 'error');
             updatePhaseIndicator('error');
+            if (consoleAutoHideTimer) clearTimeout(consoleAutoHideTimer);
             consoleAutoHideTimer = setTimeout(() => showConsole(false), 15000);
         }
     }
@@ -424,8 +523,17 @@ const WeatherSat = (function() {
             updateStatusUI('capturing', `Auto: ${p.name || p.satellite} ${p.frequency} MHz`);
             showNotification('Weather Sat', `Auto-capture started: ${p.name || p.satellite}`);
         } else if (data.type === 'schedule_capture_complete') {
-            showNotification('Weather Sat', `Auto-capture complete: ${(data.pass || {}).name || ''}`);
+            const p = data.pass || {};
+            showNotification('Weather Sat', `Auto-capture complete: ${p.name || ''}`);
+            // Reset UI — the decoder's stop() doesn't emit a progress complete event
+            // when called internally by the scheduler, so we handle it here.
+            isRunning = false;
+            updateStatusUI('idle', 'Auto-capture complete');
+            const captureStatus = document.getElementById('wxsatCaptureStatus');
+            if (captureStatus) captureStatus.classList.remove('active');
+            updatePhaseIndicator('complete');
             loadImages();
+            loadPasses();
         } else if (data.type === 'schedule_capture_skipped') {
             const reason = data.reason || 'unknown';
             const p = data.pass || {};
@@ -440,6 +548,26 @@ const WeatherSat = (function() {
         const m = Math.floor(seconds / 60);
         const s = seconds % 60;
         return `${m}:${s.toString().padStart(2, '0')}`;
+    }
+
+    /**
+     * Parse pass timestamps, accepting legacy malformed UTC strings (+00:00Z).
+     */
+    function parsePassDate(value) {
+        if (!value || typeof value !== 'string') return null;
+
+        let parsed = new Date(value);
+        if (!Number.isNaN(parsed.getTime())) {
+            return parsed;
+        }
+
+        // Backward-compatible cleanup for accidentally double-suffixed UTC timestamps.
+        parsed = new Date(value.replace(/\+00:00Z$/, 'Z'));
+        if (!Number.isNaN(parsed.getTime())) {
+            return parsed;
+        }
+
+        return null;
     }
 
     /**
@@ -459,7 +587,13 @@ const WeatherSat = (function() {
         }
 
         if (!storedLat || !storedLon) {
+            allPasses = [];
+            passes = [];
+            selectedPassIndex = -1;
             renderPasses([]);
+            renderTimeline([]);
+            updateCountdownFromPasses();
+            updateGroundTrack(null);
             return;
         }
 
@@ -469,14 +603,8 @@ const WeatherSat = (function() {
             const data = await response.json();
 
             if (data.status === 'ok') {
-                passes = data.passes || [];
-                renderPasses(passes);
-                renderTimeline(passes);
-                updateCountdownFromPasses();
-                // Auto-select first pass
-                if (passes.length > 0 && selectedPassIndex < 0) {
-                    selectPass(0);
-                }
+                allPasses = data.passes || [];
+                applyPassFilter();
             }
         } catch (err) {
             console.error('Failed to load passes:', err);
@@ -484,12 +612,36 @@ const WeatherSat = (function() {
     }
 
     /**
+     * Filter displayed passes by the currently selected satellite dropdown value.
+     * Updates the module-level `passes` from `allPasses` so selectPass/countdown work.
+     */
+    function applyPassFilter() {
+        const satSelect = document.getElementById('weatherSatSelect');
+        const selected = satSelect?.value;
+        passes = selected
+            ? allPasses.filter(p => p.satellite === selected)
+            : allPasses.slice();
+
+        selectedPassIndex = -1;
+        renderPasses(passes);
+        renderTimeline(passes);
+        updateCountdownFromPasses();
+        if (passes.length > 0) {
+            selectPass(0);
+        } else {
+            updateGroundTrack(null);
+            drawPolarPlot(null);
+        }
+    }
+
+    /**
      * Select a pass to display in polar plot and map
      */
     function selectPass(index) {
-        if (index < 0 || index >= passes.length) return;
+        const filtered = getFilteredPasses();
+        if (index < 0 || index >= filtered.length) return;
         selectedPassIndex = index;
-        const pass = passes[index];
+        const pass = filtered[index];
 
         // Highlight active card
         document.querySelectorAll('.wxsat-pass-card').forEach((card, i) => {
@@ -532,13 +684,15 @@ const WeatherSat = (function() {
             const modeClass = pass.mode === 'APT' ? 'apt' : 'lrpt';
             const timeStr = pass.startTime || '--';
             const now = new Date();
-            const passStart = new Date(pass.startTimeISO);
-            const diffMs = passStart - now;
-            const diffMins = Math.floor(diffMs / 60000);
+            const passStart = parsePassDate(pass.startTimeISO);
+            const diffMs = passStart ? passStart - now : NaN;
+            const diffMins = Number.isFinite(diffMs) ? Math.floor(diffMs / 60000) : NaN;
             const isSelected = idx === selectedPassIndex;
 
-            let countdown = '';
-            if (diffMs < 0) {
+            let countdown = '--';
+            if (!Number.isFinite(diffMs)) {
+                countdown = '--';
+            } else if (diffMs < 0) {
                 countdown = 'NOW';
             } else if (diffMins < 60) {
                 countdown = `in ${diffMins}m`;
@@ -566,7 +720,7 @@ const WeatherSat = (function() {
                     </div>
                     <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 4px;">
                         <span class="wxsat-pass-quality ${pass.quality}">${pass.quality}</span>
-                        <span style="font-size: 10px; color: var(--text-dim); font-family: 'JetBrains Mono', monospace;">${countdown}</span>
+                        <span style="font-size: 10px; color: var(--text-dim); font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;">${countdown}</span>
                     </div>
                     <div style="margin-top: 6px; text-align: right;">
                         <button class="wxsat-strip-btn" onclick="event.stopPropagation(); WeatherSat.startPass('${escapeHtml(pass.satellite)}')" style="font-size: 10px; padding: 2px 8px;">Capture</button>
@@ -584,6 +738,7 @@ const WeatherSat = (function() {
      * Draw polar plot for a pass trajectory
      */
     function drawPolarPlot(pass) {
+        if (!pass) return;
         const canvas = document.getElementById('wxsatPolarCanvas');
         if (!canvas) return;
 
@@ -610,7 +765,7 @@ const WeatherSat = (function() {
             ctx.stroke();
             // Label
             ctx.fillStyle = '#555';
-            ctx.font = '9px JetBrains Mono, monospace';
+            ctx.font = '9px Roboto Condensed, monospace';
             ctx.textAlign = 'left';
             ctx.fillText(el + '\u00b0', cx + gr + 3, cy - 2);
         });
@@ -624,7 +779,7 @@ const WeatherSat = (function() {
 
         // Cardinal directions
         ctx.fillStyle = '#666';
-        ctx.font = '10px JetBrains Mono, monospace';
+        ctx.font = '10px Roboto Condensed, monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText('N', cx, cy - r - 10);
@@ -643,7 +798,7 @@ const WeatherSat = (function() {
         ctx.stroke();
 
         // Trajectory
-        const trajectory = pass.trajectory;
+        const trajectory = pass?.trajectory;
         if (!trajectory || trajectory.length === 0) return;
 
         const color = pass.mode === 'LRPT' ? '#00ff88' : '#00d4ff';
@@ -692,7 +847,7 @@ const WeatherSat = (function() {
         ctx.arc(cx + r * maxR * Math.cos(maxAz), cy + r * maxR * Math.sin(maxAz), 3, 0, Math.PI * 2);
         ctx.fill();
         ctx.fillStyle = color;
-        ctx.font = '9px JetBrains Mono, monospace';
+        ctx.font = '9px Roboto Condensed, monospace';
         ctx.textAlign = 'center';
         ctx.fillText(Math.round(maxEl) + '\u00b0', cx + r * maxR * Math.cos(maxAz), cy + r * maxR * Math.sin(maxAz) - 8);
     }
@@ -702,79 +857,337 @@ const WeatherSat = (function() {
     // ========================
 
     /**
-     * Initialize Leaflet ground track map
+     * Initialize styled real-world map panel.
      */
-    function initGroundMap() {
+    async function initGroundMap() {
         const container = document.getElementById('wxsatGroundMap');
-        if (!container || groundMap) return;
+        if (!container) return;
         if (typeof L === 'undefined') return;
+        const observer = getObserverCoords();
+        const defaultCenter = observer
+            ? [Math.max(-85, Math.min(85, observer.lat)), normalizeLon(observer.lon)]
+            : [12, 0];
+        const defaultZoom = 1;
 
-        groundMap = L.map(container, {
-            center: [20, 0],
-            zoom: 2,
-            zoomControl: false,
-            attributionControl: false,
-        });
+        if (!groundMap) {
+            groundMap = L.map(container, {
+                center: defaultCenter,
+                zoom: defaultZoom,
+                minZoom: 1,
+                maxZoom: 7,
+                zoomControl: false,
+                attributionControl: false,
+                worldCopyJump: true,
+                preferCanvas: true,
+            });
 
-        // Check tile provider from settings
-        let tileUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
-        try {
-            const provider = localStorage.getItem('tileProvider');
-            if (provider === 'osm') {
-                tileUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+            if (typeof Settings !== 'undefined' && Settings.createTileLayer) {
+                await Settings.init();
+                Settings.createTileLayer().addTo(groundMap);
+                Settings.registerMap(groundMap);
+            } else {
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                    subdomains: 'abcd',
+                    maxZoom: 18,
+                    noWrap: false,
+                    crossOrigin: true,
+                    className: 'tile-layer-cyan',
+                }).addTo(groundMap);
             }
-        } catch (e) {}
 
-        L.tileLayer(tileUrl, { maxZoom: 10 }).addTo(groundMap);
+            groundGridLayer = L.layerGroup().addTo(groundMap);
+            addStyledGridOverlay(groundGridLayer);
 
-        groundTrackLayer = L.layerGroup().addTo(groundMap);
+            groundTrackLayer = L.layerGroup().addTo(groundMap);
+            groundOverlayLayer = L.layerGroup().addTo(groundMap);
+        }
 
-        // Delayed invalidation to fix sizing
-        setTimeout(() => { if (groundMap) groundMap.invalidateSize(); }, 200);
+        setTimeout(() => {
+            if (!groundMap) return;
+            groundMap.invalidateSize(false);
+            groundMap.setView(defaultCenter, defaultZoom, { animate: false });
+            updateGroundTrack(getSelectedPass());
+        }, 140);
     }
 
     /**
-     * Update ground track on the map
+     * Update map panel subtitle.
+     */
+    function updateProjectionInfo(text) {
+        const infoEl = document.getElementById('wxsatMapInfo');
+        if (infoEl) infoEl.textContent = text || '--';
+    }
+
+    /**
+     * Normalize longitude to [-180, 180).
+     */
+    function normalizeLon(value) {
+        const lon = Number(value);
+        if (!isFinite(lon)) return 0;
+        return ((((lon + 180) % 360) + 360) % 360) - 180;
+    }
+
+    /**
+     * Build track segments that do not cross the date line.
+     */
+    function buildTrackSegments(track) {
+        const segments = [];
+        let currentSegment = [];
+
+        track.forEach((point) => {
+            const lat = Number(point?.lat);
+            const lon = normalizeLon(point?.lon);
+            if (!isFinite(lat) || !isFinite(lon)) return;
+
+            if (currentSegment.length > 0) {
+                const prevLon = currentSegment[currentSegment.length - 1][1];
+                if (Math.abs(lon - prevLon) > 180) {
+                    if (currentSegment.length > 1) segments.push(currentSegment);
+                    currentSegment = [];
+                }
+            }
+
+            currentSegment.push([lat, lon]);
+        });
+
+        if (currentSegment.length > 1) segments.push(currentSegment);
+        return segments;
+    }
+
+    /**
+     * Draw a subtle graticule over the base map for a cyber/wireframe look.
+     */
+    function addStyledGridOverlay(layer) {
+        if (!layer || typeof L === 'undefined') return;
+        layer.clearLayers();
+
+        for (let lon = -180; lon <= 180; lon += 30) {
+            const line = [];
+            for (let lat = -85; lat <= 85; lat += 5) line.push([lat, lon]);
+            L.polyline(line, {
+                color: '#4ed2ff',
+                weight: lon % 60 === 0 ? 1.1 : 0.8,
+                opacity: lon % 60 === 0 ? 0.2 : 0.12,
+                interactive: false,
+                lineCap: 'round',
+            }).addTo(layer);
+        }
+
+        for (let lat = -75; lat <= 75; lat += 15) {
+            const line = [];
+            for (let lon = -180; lon <= 180; lon += 5) line.push([lat, lon]);
+            L.polyline(line, {
+                color: '#5be7ff',
+                weight: lat % 30 === 0 ? 1.1 : 0.8,
+                opacity: lat % 30 === 0 ? 0.2 : 0.12,
+                interactive: false,
+                lineCap: 'round',
+            }).addTo(layer);
+        }
+    }
+
+    function clearSatelliteCrosshair() {
+        if (!groundOverlayLayer || !satCrosshairMarker) return;
+        groundOverlayLayer.removeLayer(satCrosshairMarker);
+        satCrosshairMarker = null;
+    }
+
+    function createSatelliteCrosshairIcon() {
+        return L.divIcon({
+            className: 'wxsat-crosshair-icon',
+            iconSize: [30, 30],
+            iconAnchor: [15, 15],
+            html: `
+                <div class="wxsat-crosshair-marker">
+                    <span class="wxsat-crosshair-h"></span>
+                    <span class="wxsat-crosshair-v"></span>
+                    <span class="wxsat-crosshair-ring"></span>
+                    <span class="wxsat-crosshair-dot"></span>
+                </div>
+            `,
+        });
+    }
+
+    /**
+     * Update selected ground track and redraw map overlays.
      */
     function updateGroundTrack(pass) {
         if (!groundMap || !groundTrackLayer) return;
 
         groundTrackLayer.clearLayers();
+        observerMarker = null;
 
-        const track = pass.groundTrack;
-        if (!track || track.length === 0) return;
+        if (!pass) {
+            clearSatelliteCrosshair();
+            updateProjectionInfo('--');
+            return;
+        }
 
-        const color = pass.mode === 'LRPT' ? '#00ff88' : '#00d4ff';
+        const track = pass?.groundTrack;
+        if (!Array.isArray(track) || track.length === 0) {
+            clearSatelliteCrosshair();
+            updateProjectionInfo(`${pass.name || pass.satellite || '--'} --`);
+            return;
+        }
 
-        // Draw polyline
-        const latlngs = track.map(p => [p.lat, p.lon]);
-        L.polyline(latlngs, { color, weight: 2, opacity: 0.8 }).addTo(groundTrackLayer);
+        const color = pass.mode === 'LRPT' ? '#27ffc6' : '#58ddff';
+        const glowClass = pass.mode === 'LRPT' ? 'wxsat-pass-track lrpt' : 'wxsat-pass-track apt';
+        const segments = buildTrackSegments(track);
+        const validPoints = track
+            .map((point) => [Number(point?.lat), normalizeLon(point?.lon)])
+            .filter((point) => isFinite(point[0]) && isFinite(point[1]));
 
-        // Start marker
-        L.circleMarker(latlngs[0], {
-            radius: 5, color: '#00ff88', fillColor: '#00ff88', fillOpacity: 1, weight: 0,
-        }).addTo(groundTrackLayer);
+        segments.forEach((segment) => {
+            L.polyline(segment, {
+                color,
+                weight: 2.3,
+                opacity: 0.9,
+                className: glowClass,
+                interactive: false,
+                lineJoin: 'round',
+            }).addTo(groundTrackLayer);
+        });
 
-        // End marker
-        L.circleMarker(latlngs[latlngs.length - 1], {
-            radius: 5, color: '#ff4444', fillColor: '#ff4444', fillOpacity: 1, weight: 0,
-        }).addTo(groundTrackLayer);
+        if (validPoints.length > 0) {
+            L.circleMarker(validPoints[0], {
+                radius: 4.5,
+                color: '#00ffa2',
+                fillColor: '#00ffa2',
+                fillOpacity: 0.95,
+                weight: 0,
+                interactive: false,
+            }).addTo(groundTrackLayer);
 
-        // Observer marker
-        const lat = parseFloat(localStorage.getItem('observerLat'));
-        const lon = parseFloat(localStorage.getItem('observerLon'));
-        if (!isNaN(lat) && !isNaN(lon)) {
-            L.circleMarker([lat, lon], {
-                radius: 6, color: '#ffbb00', fillColor: '#ffbb00', fillOpacity: 0.8, weight: 1,
+            L.circleMarker(validPoints[validPoints.length - 1], {
+                radius: 4.5,
+                color: '#ff5e5e',
+                fillColor: '#ff5e5e',
+                fillOpacity: 0.95,
+                weight: 0,
+                interactive: false,
             }).addTo(groundTrackLayer);
         }
 
-        // Fit bounds
-        try {
-            const bounds = L.latLngBounds(latlngs);
-            if (!isNaN(lat) && !isNaN(lon)) bounds.extend([lat, lon]);
-            groundMap.fitBounds(bounds, { padding: [20, 20] });
-        } catch (e) {}
+        let obsLat;
+        let obsLon;
+        if (window.ObserverLocation && ObserverLocation.isSharedEnabled()) {
+            const shared = ObserverLocation.getShared();
+            obsLat = shared?.lat;
+            obsLon = shared?.lon;
+        } else {
+            obsLat = parseFloat(localStorage.getItem('observerLat'));
+            obsLon = parseFloat(localStorage.getItem('observerLon'));
+        }
+
+        if (isFinite(obsLat) && isFinite(obsLon)) {
+            observerMarker = L.circleMarker([obsLat, obsLon], {
+                radius: 5.5,
+                color: '#ffd45b',
+                fillColor: '#ffd45b',
+                fillOpacity: 0.8,
+                weight: 1,
+                className: 'wxsat-observer-marker',
+                interactive: false,
+            }).addTo(groundTrackLayer);
+        }
+
+        updateSatelliteCrosshair(pass);
+    }
+
+    function getSelectedPass() {
+        const filtered = getFilteredPasses();
+        if (selectedPassIndex < 0 || selectedPassIndex >= filtered.length) return null;
+        return filtered[selectedPassIndex];
+    }
+
+    function getSatellitePositionForPass(pass, atTime = new Date()) {
+        const track = pass?.groundTrack;
+        if (!Array.isArray(track) || track.length === 0) return null;
+
+        const first = track[0];
+        if (track.length === 1) {
+            const lat = Number(first.lat);
+            const lon = Number(first.lon);
+            if (!isFinite(lat) || !isFinite(lon)) return null;
+            return { lat, lon };
+        }
+
+        const start = parsePassDate(pass.startTimeISO);
+        const end = parsePassDate(pass.endTimeISO);
+
+        let fraction = 0;
+        if (start && end && end > start) {
+            const totalMs = end.getTime() - start.getTime();
+            const elapsedMs = atTime.getTime() - start.getTime();
+            fraction = Math.max(0, Math.min(1, elapsedMs / totalMs));
+        }
+
+        const lastIndex = track.length - 1;
+        const idxFloat = fraction * lastIndex;
+        const idx0 = Math.floor(idxFloat);
+        const idx1 = Math.min(lastIndex, idx0 + 1);
+        const t = idxFloat - idx0;
+
+        const p0 = track[idx0];
+        const p1 = track[idx1];
+        const lat0 = Number(p0?.lat);
+        const lon0 = Number(p0?.lon);
+        const lat1 = Number(p1?.lat);
+        const lon1 = Number(p1?.lon);
+
+        if (!isFinite(lat0) || !isFinite(lon0) || !isFinite(lat1) || !isFinite(lon1)) {
+            return null;
+        }
+
+        return {
+            lat: lat0 + ((lat1 - lat0) * t),
+            lon: lon0 + ((lon1 - lon0) * t),
+        };
+    }
+
+    function updateSatelliteCrosshair(pass) {
+        if (!groundMap || !groundOverlayLayer || typeof L === 'undefined') return;
+
+        if (!pass) {
+            clearSatelliteCrosshair();
+            updateProjectionInfo('--');
+            return;
+        }
+
+        const position = getSatellitePositionForPass(pass);
+        if (!position) {
+            clearSatelliteCrosshair();
+            updateProjectionInfo(`${pass.name || pass.satellite || '--'} --`);
+            return;
+        }
+
+        const latlng = [position.lat, normalizeLon(position.lon)];
+        if (!satCrosshairMarker) {
+            satCrosshairMarker = L.marker(latlng, {
+                icon: createSatelliteCrosshairIcon(),
+                interactive: false,
+                keyboard: false,
+                zIndexOffset: 900,
+            }).addTo(groundOverlayLayer);
+        } else {
+            satCrosshairMarker.setLatLng(latlng);
+        }
+
+        const infoText =
+            `${pass.name || pass.satellite || 'Satellite'} ` +
+            `${position.lat.toFixed(2)}°, ${normalizeLon(position.lon).toFixed(2)}°`;
+        updateProjectionInfo(infoText);
+
+        if (!satCrosshairMarker.getTooltip()) {
+            satCrosshairMarker.bindTooltip(infoText, {
+                direction: 'top',
+                offset: [0, -12],
+                opacity: 0.92,
+                className: 'wxsat-map-tooltip',
+            });
+        } else {
+            satCrosshairMarker.setTooltipContent(infoText);
+        }
     }
 
     // ========================
@@ -796,10 +1209,14 @@ const WeatherSat = (function() {
         const now = new Date();
         let nextPass = null;
         let isActive = false;
+        const filtered = getFilteredPasses();
 
-        for (const pass of passes) {
-            const start = new Date(pass.startTimeISO);
-            const end = new Date(pass.endTimeISO);
+        for (const pass of filtered) {
+            const start = parsePassDate(pass.startTimeISO);
+            const end = parsePassDate(pass.endTimeISO);
+            if (!start || !end) {
+                continue;
+            }
             if (end > now) {
                 nextPass = pass;
                 isActive = start <= now;
@@ -828,7 +1245,19 @@ const WeatherSat = (function() {
             return;
         }
 
-        const target = new Date(nextPass.startTimeISO);
+        const target = parsePassDate(nextPass.startTimeISO);
+        if (!target) {
+            if (daysEl) daysEl.textContent = '--';
+            if (hoursEl) hoursEl.textContent = '--';
+            if (minsEl) minsEl.textContent = '--';
+            if (secsEl) secsEl.textContent = '--';
+            if (satEl) satEl.textContent = '--';
+            if (detailEl) detailEl.textContent = 'Invalid pass time';
+            if (boxes) boxes.querySelectorAll('.wxsat-countdown-box').forEach(b => {
+                b.classList.remove('imminent', 'active');
+            });
+            return;
+        }
         let diffMs = target - now;
 
         if (isActive) {
@@ -862,6 +1291,11 @@ const WeatherSat = (function() {
                 b.classList.toggle('active', isActive);
             });
         }
+
+        // Keep timeline cursor in sync
+        updateTimelineCursor();
+        // Keep selected satellite marker synchronized with time progression.
+        updateSatelliteCrosshair(getSelectedPass());
     }
 
     // ========================
@@ -885,8 +1319,9 @@ const WeatherSat = (function() {
         const dayMs = 24 * 60 * 60 * 1000;
 
         passList.forEach((pass, idx) => {
-            const start = new Date(pass.startTimeISO);
-            const end = new Date(pass.endTimeISO);
+            const start = parsePassDate(pass.startTimeISO);
+            const end = parsePassDate(pass.endTimeISO);
+            if (!start || !end) return;
 
             const startPct = Math.max(0, Math.min(100, ((start - dayStart) / dayMs) * 100));
             const endPct = Math.max(0, Math.min(100, ((end - dayStart) / dayMs) * 100));
@@ -926,12 +1361,13 @@ const WeatherSat = (function() {
     /**
      * Toggle auto-scheduler
      */
-    async function toggleScheduler() {
+    async function toggleScheduler(source) {
+        const checked = source?.checked ?? false;
+
         const stripCheckbox = document.getElementById('wxsatAutoSchedule');
         const sidebarCheckbox = document.getElementById('wxsatSidebarAutoSchedule');
-        const checked = stripCheckbox?.checked || sidebarCheckbox?.checked;
 
-        // Sync both checkboxes
+        // Sync both checkboxes to the source of truth
         if (stripCheckbox) stripCheckbox.checked = checked;
         if (sidebarCheckbox) sidebarCheckbox.checked = checked;
 
@@ -946,8 +1382,15 @@ const WeatherSat = (function() {
      * Enable auto-scheduler
      */
     async function enableScheduler() {
-        const lat = parseFloat(localStorage.getItem('observerLat'));
-        const lon = parseFloat(localStorage.getItem('observerLon'));
+        let lat, lon;
+        if (window.ObserverLocation && ObserverLocation.isSharedEnabled()) {
+            const shared = ObserverLocation.getShared();
+            lat = shared?.lat;
+            lon = shared?.lon;
+        } else {
+            lat = parseFloat(localStorage.getItem('observerLat'));
+            lon = parseFloat(localStorage.getItem('observerLon'));
+        }
 
         if (isNaN(lat) || isNaN(lon)) {
             showNotification('Weather Sat', 'Set observer location first');
@@ -975,13 +1418,28 @@ const WeatherSat = (function() {
                 }),
             });
 
-            const data = await response.json();
+            let data = {};
+            try {
+                data = await response.json();
+            } catch (err) {
+                data = {};
+            }
+
+            if (!response.ok || !data || data.enabled !== true) {
+                schedulerEnabled = false;
+                updateSchedulerUI({ enabled: false, scheduled_count: 0 });
+                showNotification('Weather Sat', data.message || 'Failed to enable auto-scheduler');
+                return;
+            }
+
             schedulerEnabled = true;
             updateSchedulerUI(data);
             startStream();
             showNotification('Weather Sat', `Auto-scheduler enabled (${data.scheduled_count || 0} passes)`);
         } catch (err) {
             console.error('Failed to enable scheduler:', err);
+            schedulerEnabled = false;
+            updateSchedulerUI({ enabled: false, scheduled_count: 0 });
             showNotification('Weather Sat', 'Failed to enable auto-scheduler');
         }
     }
@@ -991,7 +1449,11 @@ const WeatherSat = (function() {
      */
     async function disableScheduler() {
         try {
-            await fetch('/weather-sat/schedule/disable', { method: 'POST' });
+            const response = await fetch('/weather-sat/schedule/disable', { method: 'POST' });
+            if (!response.ok) {
+                showNotification('Weather Sat', 'Failed to disable auto-scheduler');
+                return;
+            }
             schedulerEnabled = false;
             updateSchedulerUI({ enabled: false });
             if (!isRunning) stopStream();
@@ -1007,6 +1469,7 @@ const WeatherSat = (function() {
     async function checkSchedulerStatus() {
         try {
             const response = await fetch('/weather-sat/schedule/status');
+            if (!response.ok) return;
             const data = await response.json();
             schedulerEnabled = data.enabled;
             updateSchedulerUI(data);
@@ -1259,9 +1722,14 @@ const WeatherSat = (function() {
      * Invalidate ground map size (call after container becomes visible)
      */
     function invalidateMap() {
-        if (groundMap) {
-            setTimeout(() => groundMap.invalidateSize(), 100);
-        }
+        setTimeout(() => {
+            if (!groundMap) {
+                initGroundMap();
+                return;
+            }
+            groundMap.invalidateSize(false);
+            updateGroundTrack(getSelectedPass());
+        }, 100);
     }
 
     // ========================
@@ -1366,9 +1834,29 @@ const WeatherSat = (function() {
         }
     }
 
+    /**
+     * Suspend background activity when leaving the mode.
+     * Closes the SSE stream and stops the countdown interval so they don't
+     * keep running while another mode is active.  The stream is re-opened
+     * by init() or startStream() when the mode is next entered.
+     */
+    function suspend() {
+        if (countdownInterval) {
+            clearInterval(countdownInterval);
+            countdownInterval = null;
+        }
+        // Only close the stream if nothing is actively capturing/scheduling —
+        // if a capture or scheduler is running we want it to continue on the
+        // server and the stream will reconnect on next init().
+        if (!isRunning && !schedulerEnabled) {
+            stopStream();
+        }
+    }
+
     // Public API
     return {
         init,
+        suspend,
         start,
         stop,
         startPass,

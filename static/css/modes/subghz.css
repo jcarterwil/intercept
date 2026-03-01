@@ -5,7 +5,7 @@
     padding: 8px 10px;
     background: var(--bg-tertiary, #1a1f2e);
     border-radius: 4px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 11px;
 }
 
@@ -86,7 +86,7 @@
     border-radius: 4px;
     background: var(--bg-tertiary, #1a1f2e);
     color: var(--text-primary, #e0e0e0);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 11px;
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
@@ -113,7 +113,7 @@
     border-bottom: 2px solid transparent;
     background: transparent;
     color: var(--text-dim, #666);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 11px;
     text-transform: uppercase;
     cursor: pointer;
@@ -153,7 +153,7 @@
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 10px;
     color: var(--text-secondary, #999);
     text-transform: uppercase;
@@ -168,7 +168,7 @@
 }
 
 .subghz-trigger-grid label {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 9px;
     color: var(--text-dim, #666);
     text-transform: uppercase;
@@ -182,7 +182,7 @@
     border-radius: 4px;
     background: var(--bg-primary, #0d1117);
     color: var(--text-primary, #e0e0e0);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 10px;
 }
 
@@ -192,7 +192,7 @@
 
 .subghz-trigger-help {
     margin: 0;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 9px;
     color: var(--text-dim, #666);
     line-height: 1.4;
@@ -207,7 +207,7 @@
     background: var(--bg-tertiary, #1a1f2e);
     border-radius: 4px;
     margin-bottom: 10px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 11px;
 }
 
@@ -264,7 +264,7 @@
     border-radius: 4px;
     background: transparent;
     color: var(--text-primary, #e0e0e0);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 12px;
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
@@ -369,7 +369,7 @@
     background: var(--bg-tertiary, #1a1f2e);
     border: 1px solid var(--border-color, #2a3040);
     border-radius: 4px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 11px;
     min-width: 0;
     transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
@@ -416,7 +416,7 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 9px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -446,7 +446,7 @@
     padding: 1px 6px;
     border-radius: 999px;
     border: 1px solid var(--border-color, #2a3040);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 9px;
     letter-spacing: 0.35px;
     color: var(--text-dim, #666);
@@ -512,7 +512,7 @@
     color: var(--text-dim, #666);
     font-size: 10px;
     cursor: pointer;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
 }
 
 .subghz-capture-actions button:hover {
@@ -554,7 +554,7 @@
     border-radius: 4px;
     color: var(--accent-red, #ff4444);
     font-size: 10px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     line-height: 1.4;
     margin-bottom: 8px;
 }
@@ -591,7 +591,7 @@
     border-radius: 6px;
     padding: 12px;
     overflow-y: auto;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 12px;
     color: var(--text-primary, #e0e0e0);
     min-height: 200px;
@@ -695,12 +695,12 @@
 .subghz-tx-modal .tx-freq {
     color: var(--accent-cyan, #00d4ff);
     font-weight: 600;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
 }
 
 .subghz-tx-modal .tx-duration {
     color: var(--text-dim, #666);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
 }
 
 .subghz-tx-segment-box {
@@ -742,7 +742,7 @@
     border-radius: 4px;
     background: var(--bg-primary, #0d1117);
     color: var(--text-primary, #e0e0e0);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 11px;
 }
 
@@ -755,7 +755,7 @@
     margin-bottom: 0 !important;
     font-size: 11px !important;
     color: var(--accent-cyan, #00d4ff) !important;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
 }
 
 .subghz-tx-burst-assist {
@@ -768,7 +768,7 @@
 }
 
 .subghz-tx-burst-title {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 10px;
     color: var(--text-dim, #666);
     text-transform: uppercase;
@@ -805,7 +805,7 @@
 
 .subghz-tx-burst-range {
     margin: 0 0 8px 0;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 10px;
     color: var(--accent-cyan, #00d4ff);
 }
@@ -839,7 +839,7 @@
     padding: 6px;
     border: 1px dashed var(--border-color, #2a3040);
     border-radius: 4px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 10px;
     color: var(--text-dim, #666);
     line-height: 1.4;
@@ -854,7 +854,7 @@
     border: 1px solid var(--border-color, #2a3040);
     border-radius: 4px;
     background: rgba(0, 0, 0, 0.15);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 10px;
     color: var(--text-secondary, #999);
 }
@@ -865,7 +865,7 @@
     border-radius: 3px;
     background: transparent;
     color: #00d4ff;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 10px;
     cursor: pointer;
 }
@@ -884,7 +884,7 @@
 .subghz-tx-modal-actions button {
     padding: 8px 20px;
     border-radius: 4px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 12px;
     cursor: pointer;
     border: 1px solid;
@@ -926,7 +926,7 @@
     color: var(--text-dim, #666);
     font-size: 12px;
     padding: 24px 12px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
 }
 
 .subghz-captures-list-main .subghz-empty {
@@ -943,7 +943,7 @@
     border: 1px solid #2a3040;
     border-radius: 4px;
     padding: 5px 9px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 11px;
     z-index: 9999;
     display: none;
@@ -970,7 +970,7 @@
     min-width: 180px;
     padding: 4px 0;
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 11px;
 }
 
@@ -1029,7 +1029,7 @@
     border-radius: 3px;
     background: transparent;
     color: var(--text-primary, #e0e0e0);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 10px;
     cursor: pointer;
     transition: background 0.12s, border-color 0.12s, color 0.12s;
@@ -1068,7 +1068,7 @@
     content: 'No peaks detected';
     color: var(--text-dim, #666);
     font-size: 10px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     padding: 6px 0;
     text-align: center;
 }
@@ -1082,7 +1082,7 @@
     border: 1px solid var(--border-color, #2a3040);
     border-radius: 3px;
     cursor: pointer;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 10px;
     transition: border-color 0.12s;
 }
@@ -1108,7 +1108,7 @@
     border: 1px solid var(--border-color, #2a3040);
     border-radius: 6px;
     padding: 6px 12px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 11px;
     flex-shrink: 0;
     flex-wrap: wrap;
@@ -1192,7 +1192,7 @@
     border-radius: 3px;
     background: transparent;
     color: #22c55e;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 10px;
     cursor: pointer;
     text-transform: uppercase;
@@ -1211,7 +1211,7 @@
     padding: 2px 8px;
     border: 1px solid var(--border-color, #2a3040);
     border-radius: 3px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 10px;
     color: var(--text-secondary, #999);
     letter-spacing: 0.3px;
@@ -1263,7 +1263,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 10px;
 }
 
@@ -1300,7 +1300,7 @@
     border-radius: 999px;
     margin-left: auto;
     margin-right: 8px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 10px;
     color: var(--text-dim, #666);
     background: rgba(0, 0, 0, 0.15);
@@ -1365,7 +1365,7 @@
     padding: 6px 12px;
     overflow-y: auto;
     max-height: 114px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 10px;
     line-height: 1.6;
 }
@@ -1402,7 +1402,7 @@
 }
 
 .subghz-hub-header-title {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 20px;
     font-weight: 700;
     color: var(--accent-cyan, #00d4ff);
@@ -1410,7 +1410,7 @@
 }
 
 .subghz-hub-header-sub {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 11px;
     color: var(--text-dim, #666);
     margin-top: 2px;
@@ -1472,14 +1472,14 @@
 }
 
 .subghz-hub-title {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 14px;
     font-weight: 600;
     color: var(--text-primary, #e0e0e0);
 }
 
 .subghz-hub-desc {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 10px;
     color: var(--text-dim, #666);
 }
@@ -1526,7 +1526,7 @@
 }
 
 .subghz-saved-selection-count {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 10px;
     color: var(--accent-cyan, #00d4ff);
     margin-right: 4px;
@@ -1538,7 +1538,7 @@
     border-radius: 4px;
     background: transparent;
     color: var(--text-secondary, #999);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 11px;
     cursor: pointer;
     transition: border-color 0.15s, color 0.15s;
@@ -1550,7 +1550,7 @@
 }
 
 .subghz-op-panel-title {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 12px;
     color: var(--text-primary, #e0e0e0);
     text-transform: uppercase;
@@ -1620,7 +1620,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 14px;
     font-weight: 600;
     color: var(--accent-red, #ff4444);
@@ -1654,14 +1654,14 @@
 }
 
 .subghz-rx-info-label {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 9px;
     color: var(--text-dim, #666);
     letter-spacing: 0.5px;
 }
 
 .subghz-rx-info-value {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 16px;
     font-weight: 600;
     color: var(--text-primary, #e0e0e0);
@@ -1688,7 +1688,7 @@
     border: 1px solid var(--border-color, #2a3040);
     border-radius: 4px;
     background: rgba(0, 0, 0, 0.22);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
 }
 
 .subghz-rx-hint-label {
@@ -1722,7 +1722,7 @@
     padding: 2px 8px;
     border: 1px solid var(--border-color, #2a3040);
     border-radius: 999px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 10px;
     color: var(--text-dim, #666);
     background: rgba(0, 0, 0, 0.2);
@@ -1741,7 +1741,7 @@
 }
 
 .subghz-rx-level-label {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 9px;
     color: var(--text-dim, #666);
     letter-spacing: 0.5px;
@@ -1772,7 +1772,7 @@
 }
 
 .subghz-rx-scope-label {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 9px;
     color: var(--text-dim, #666);
     letter-spacing: 0.5px;
@@ -1832,7 +1832,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 9px;
     color: var(--text-dim, #666);
     letter-spacing: 0.4px;
@@ -1854,7 +1854,7 @@
     border-radius: 4px;
     background: transparent;
     color: var(--text-secondary, #999);
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 10px;
     cursor: pointer;
     transition: border-color 0.15s, color 0.15s, background 0.15s;
@@ -1938,7 +1938,7 @@
 }
 
 .subghz-tx-label {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 14px;
     font-weight: 600;
     color: var(--accent-red, #ff4444);
@@ -1958,14 +1958,14 @@
 }
 
 .subghz-tx-info-label {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 9px;
     color: var(--text-dim, #666);
     letter-spacing: 0.5px;
 }
 
 .subghz-tx-info-value {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 16px;
     font-weight: 600;
     color: var(--text-primary, #e0e0e0);
@@ -1998,7 +1998,7 @@
 }
 
 .subghz-sweep-peaks-title {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Roboto Condensed', 'Arial Narrow', sans-serif;
     font-size: 10px;
     color: var(--text-dim, #666);
     text-transform: uppercase;

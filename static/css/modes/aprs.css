@@ -60,7 +60,7 @@
     gap: 4px;
 }
 .aprs-strip .strip-select {
-    background: rgba(0,0,0,0.3);
+    background: var(--bg-dark);
     border: 1px solid var(--border-color);
     color: var(--text-primary);
     padding: 4px 8px;

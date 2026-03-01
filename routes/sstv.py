@@ -15,7 +15,7 @@ from flask import Blueprint, jsonify, request, Response, send_file
 
 import app as app_module
 from utils.logging import get_logger
-from utils.sse import format_sse
+from utils.sse import sse_stream_fanout
 from utils.event_pipeline import process_event
 from utils.sstv import (
     get_sstv_decoder,
@@ -26,6 +26,12 @@ from utils.sstv import (
 logger = get_logger('intercept.sstv')
 
 sstv_bp = Blueprint('sstv', __name__, url_prefix='/sstv')
+
+# ISS SSTV runs on a fixed downlink; allow a small entry tolerance so users
+# can type nearby values and still land on the canonical center frequency.
+ISS_SSTV_MODULATION = 'fm'
+ISS_SSTV_FREQUENCIES = (ISS_SSTV_FREQ,)
+ISS_SSTV_FREQ_TOLERANCE_MHZ = 0.05
 
 # Queue for SSE progress streaming
 _sstv_queue: queue.Queue = queue.Queue(maxsize=100)
@@ -46,6 +52,14 @@ def _progress_callback(data: dict) -> None:
             pass
 
 
+def _normalize_iss_frequency(frequency_mhz: float) -> float | None:
+    """Snap near-match user input to a supported ISS SSTV center frequency."""
+    for supported in ISS_SSTV_FREQUENCIES:
+        if abs(frequency_mhz - supported) <= ISS_SSTV_FREQ_TOLERANCE_MHZ:
+            return supported
+    return None
+
+
 @sstv_bp.route('/status')
 def get_status():
     """
@@ -62,6 +76,7 @@ def get_status():
         'decoder': decoder.decoder_available,
         'running': decoder.is_running,
         'iss_frequency': ISS_SSTV_FREQ,
+        'modulation': ISS_SSTV_MODULATION,
         'image_count': len(decoder.get_images()),
         'doppler_enabled': decoder.doppler_enabled,
     }
@@ -82,6 +97,7 @@ def start_decoder():
     JSON body (optional):
         {
             "frequency": 145.800,  // Frequency in MHz (default: ISS 145.800)
+            "modulation": "fm",    // ISS mode is FM-only
             "device": 0,           // RTL-SDR device index
             "latitude": 40.7128,   // Observer latitude for Doppler correction
             "longitude": -74.0060  // Observer longitude for Doppler correction
@@ -106,6 +122,7 @@ def start_decoder():
         return jsonify({
             'status': 'already_running',
             'frequency': ISS_SSTV_FREQ,
+            'modulation': ISS_SSTV_MODULATION,
             'doppler_enabled': decoder.doppler_enabled
         })
 
@@ -119,18 +136,29 @@ def start_decoder():
     # Get parameters
     data = request.get_json(silent=True) or {}
     frequency = data.get('frequency', ISS_SSTV_FREQ)
+    modulation = str(data.get('modulation', ISS_SSTV_MODULATION)).strip().lower()
     device_index = data.get('device', 0)
     latitude = data.get('latitude')
     longitude = data.get('longitude')
 
+    # Validate modulation (ISS mode is FM-only)
+    if modulation != ISS_SSTV_MODULATION:
+        return jsonify({
+            'status': 'error',
+            'message': f'Modulation must be {ISS_SSTV_MODULATION} for ISS SSTV mode'
+        }), 400
+
     # Validate frequency
     try:
         frequency = float(frequency)
-        if not (100 <= frequency <= 500):  # VHF range
+        normalized_frequency = _normalize_iss_frequency(frequency)
+        if normalized_frequency is None:
+            supported = ', '.join(f'{freq:.3f}' for freq in ISS_SSTV_FREQUENCIES)
             return jsonify({
                 'status': 'error',
-                'message': 'Frequency must be between 100-500 MHz'
+                'message': f'Supported ISS SSTV frequency: {supported} MHz FM'
             }), 400
+        frequency = normalized_frequency
     except (TypeError, ValueError):
         return jsonify({
             'status': 'error',
@@ -178,7 +206,8 @@ def start_decoder():
         frequency=frequency,
         device_index=device_index,
         latitude=latitude,
-        longitude=longitude
+        longitude=longitude,
+        modulation=ISS_SSTV_MODULATION,
     )
 
     if success:
@@ -187,6 +216,7 @@ def start_decoder():
         result = {
             'status': 'started',
             'frequency': frequency,
+            'modulation': ISS_SSTV_MODULATION,
             'device': device_index,
             'doppler_enabled': decoder.doppler_enabled
         }
@@ -392,26 +422,19 @@ def stream_progress():
     Returns:
         SSE stream (text/event-stream)
     """
-    def generate() -> Generator[str, None, None]:
-        last_keepalive = time.time()
-        keepalive_interval = 30.0
+    def _on_msg(msg: dict[str, Any]) -> None:
+        process_event('sstv', msg, msg.get('type'))
 
-        while True:
-            try:
-                progress = _sstv_queue.get(timeout=1)
-                last_keepalive = time.time()
-                try:
-                    process_event('sstv', progress, progress.get('type'))
-                except Exception:
-                    pass
-                yield format_sse(progress)
-            except queue.Empty:
-                now = time.time()
-                if now - last_keepalive >= keepalive_interval:
-                    yield format_sse({'type': 'keepalive'})
-                    last_keepalive = now
-
-    response = Response(generate(), mimetype='text/event-stream')
+    response = Response(
+        sse_stream_fanout(
+            source_queue=_sstv_queue,
+            channel_key='sstv',
+            timeout=1.0,
+            keepalive_interval=30.0,
+            on_message=_on_msg,
+        ),
+        mimetype='text/event-stream',
+    )
     response.headers['Cache-Control'] = 'no-cache'
     response.headers['X-Accel-Buffering'] = 'no'
     response.headers['Connection'] = 'keep-alive'

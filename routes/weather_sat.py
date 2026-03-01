@@ -12,12 +12,13 @@ from flask import Blueprint, jsonify, request, Response, send_file
 
 from utils.logging import get_logger
 from utils.sse import sse_stream
-from utils.validation import validate_device_index, validate_gain, validate_latitude, validate_longitude, validate_elevation
+from utils.validation import validate_device_index, validate_gain, validate_latitude, validate_longitude, validate_elevation, validate_rtl_tcp_host, validate_rtl_tcp_port
 from utils.weather_sat import (
     get_weather_sat_decoder,
     is_weather_sat_available,
     CaptureProgress,
     WEATHER_SATELLITES,
+    DEFAULT_SAMPLE_RATE,
 )
 
 logger = get_logger('intercept.weather_sat')
@@ -38,6 +39,35 @@ def _progress_callback(progress: CaptureProgress) -> None:
             _weather_sat_queue.put_nowait(progress.to_dict())
         except queue.Empty:
             pass
+
+
+def _release_weather_sat_device(device_index: int) -> None:
+    """Release an SDR device only if weather-sat currently owns it."""
+    if device_index < 0:
+        return
+
+    try:
+        import app as app_module
+    except ImportError:
+        return
+
+    owner = None
+    get_status = getattr(app_module, 'get_sdr_device_status', None)
+    if callable(get_status):
+        try:
+            owner = get_status().get(device_index)
+        except Exception:
+            owner = None
+
+    if owner and owner != 'weather_sat':
+        logger.debug(
+            'Skipping SDR release for device %s owned by %s',
+            device_index,
+            owner,
+        )
+        return
+
+    app_module.release_sdr_device(device_index)
 
 
 @weather_sat_bp.route('/status')
@@ -128,18 +158,30 @@ def start_capture():
 
     bias_t = bool(data.get('bias_t', False))
 
-    # Claim SDR device
-    try:
-        import app as app_module
-        error = app_module.claim_sdr_device(device_index, 'weather_sat')
-        if error:
-            return jsonify({
-                'status': 'error',
-                'error_type': 'DEVICE_BUSY',
-                'message': error,
-            }), 409
-    except ImportError:
-        pass
+    # Check for rtl_tcp (remote SDR) connection
+    rtl_tcp_host = data.get('rtl_tcp_host')
+    rtl_tcp_port = data.get('rtl_tcp_port', 1234)
+
+    if rtl_tcp_host:
+        try:
+            rtl_tcp_host = validate_rtl_tcp_host(rtl_tcp_host)
+            rtl_tcp_port = validate_rtl_tcp_port(rtl_tcp_port)
+        except ValueError as e:
+            return jsonify({'status': 'error', 'message': str(e)}), 400
+
+    # Claim SDR device (skip for remote rtl_tcp)
+    if not rtl_tcp_host:
+        try:
+            import app as app_module
+            error = app_module.claim_sdr_device(device_index, 'weather_sat')
+            if error:
+                return jsonify({
+                    'status': 'error',
+                    'error_type': 'DEVICE_BUSY',
+                    'message': error,
+                }), 409
+        except ImportError:
+            pass
 
     # Clear queue
     while not _weather_sat_queue.empty():
@@ -152,19 +194,19 @@ def start_capture():
     decoder.set_callback(_progress_callback)
 
     def _release_device():
-        try:
-            import app as app_module
-            app_module.release_sdr_device(device_index)
-        except ImportError:
-            pass
+        if not rtl_tcp_host:
+            _release_weather_sat_device(device_index)
 
     decoder.set_on_complete(_release_device)
 
-    success = decoder.start(
+    success, error_msg = decoder.start(
         satellite=satellite,
         device_index=device_index,
         gain=gain,
+        sample_rate=DEFAULT_SAMPLE_RATE,
         bias_t=bias_t,
+        rtl_tcp_host=rtl_tcp_host,
+        rtl_tcp_port=rtl_tcp_port,
     )
 
     if success:
@@ -181,7 +223,7 @@ def start_capture():
         _release_device()
         return jsonify({
             'status': 'error',
-            'message': 'Failed to start capture'
+            'message': error_msg or 'Failed to start capture'
         }), 500
 
 
@@ -283,7 +325,7 @@ def test_decode():
     decoder.set_callback(_progress_callback)
     decoder.set_on_complete(None)
 
-    success = decoder.start_from_file(
+    success, error_msg = decoder.start_from_file(
         satellite=satellite,
         input_file=input_file,
         sample_rate=sample_rate,
@@ -302,7 +344,7 @@ def test_decode():
     else:
         return jsonify({
             'status': 'error',
-            'message': 'Failed to start file decode'
+            'message': error_msg or 'Failed to start file decode'
         }), 500
 
 
@@ -318,12 +360,7 @@ def stop_capture():
 
     decoder.stop()
 
-    # Release SDR device
-    try:
-        import app as app_module
-        app_module.release_sdr_device(device_index)
-    except ImportError:
-        pass
+    _release_weather_sat_device(device_index)
 
     return jsonify({'status': 'stopped'})
 
@@ -566,14 +603,21 @@ def enable_schedule():
     scheduler = get_weather_sat_scheduler()
     scheduler.set_callbacks(_progress_callback, _scheduler_event_callback)
 
-    result = scheduler.enable(
-        lat=lat,
-        lon=lon,
-        min_elevation=min_elev,
-        device=device,
-        gain=gain_val,
-        bias_t=bool(data.get('bias_t', False)),
-    )
+    try:
+        result = scheduler.enable(
+            lat=lat,
+            lon=lon,
+            min_elevation=min_elev,
+            device=device,
+            gain=gain_val,
+            bias_t=bool(data.get('bias_t', False)),
+        )
+    except Exception as e:
+        logger.exception("Failed to enable weather sat scheduler")
+        return jsonify({
+            'status': 'error',
+            'message': 'Failed to enable scheduler'
+        }), 500
 
     return jsonify({'status': 'ok', **result})
 

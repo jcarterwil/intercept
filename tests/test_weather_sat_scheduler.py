@@ -16,6 +16,7 @@ from utils.weather_sat_scheduler import (
     WeatherSatScheduler,
     ScheduledPass,
     get_weather_sat_scheduler,
+    _parse_utc_iso,
 )
 
 
@@ -327,7 +328,7 @@ class TestWeatherSatScheduler:
         assert len(passes) == 1
         assert passes[0]['id'] == 'NOAA-18_202401011200'
 
-    @patch('utils.weather_sat_scheduler.predict_passes')
+    @patch('utils.weather_sat_predict.predict_passes')
     @patch('threading.Timer')
     def test_refresh_passes(self, mock_timer, mock_predict):
         """_refresh_passes() should schedule future passes."""
@@ -361,7 +362,7 @@ class TestWeatherSatScheduler:
         assert scheduler._passes[0].satellite == 'NOAA-18'
         mock_timer_instance.start.assert_called()
 
-    @patch('utils.weather_sat_scheduler.predict_passes')
+    @patch('utils.weather_sat_predict.predict_passes')
     def test_refresh_passes_skip_past(self, mock_predict):
         """_refresh_passes() should skip passes that already started."""
         now = datetime.now(timezone.utc)
@@ -389,7 +390,42 @@ class TestWeatherSatScheduler:
         # Should not schedule past passes
         assert len(scheduler._passes) == 0
 
-    @patch('utils.weather_sat_scheduler.predict_passes')
+    @patch('utils.weather_sat_predict.predict_passes')
+    @patch('threading.Timer')
+    def test_refresh_passes_active_window_triggers_immediately(self, mock_timer, mock_predict):
+        """_refresh_passes() should trigger immediately during an active pass window."""
+        now = datetime.now(timezone.utc)
+        active_pass = {
+            'id': 'NOAA-18_ACTIVE',
+            'satellite': 'NOAA-18',
+            'name': 'NOAA 18',
+            'frequency': 137.9125,
+            'mode': 'APT',
+            'startTimeISO': (now - timedelta(minutes=2)).isoformat(),
+            'endTimeISO': (now + timedelta(minutes=8)).isoformat(),
+            'maxEl': 45.0,
+            'duration': 10.0,
+            'quality': 'good',
+        }
+        mock_predict.return_value = [active_pass]
+
+        pass_timer = MagicMock()
+        refresh_timer = MagicMock()
+        mock_timer.side_effect = [pass_timer, refresh_timer]
+
+        scheduler = WeatherSatScheduler()
+        scheduler._enabled = True
+        scheduler._lat = 51.5
+        scheduler._lon = -0.1
+
+        scheduler._refresh_passes()
+
+        assert len(scheduler._passes) == 1
+        first_delay = mock_timer.call_args_list[0][0][0]
+        assert first_delay == pytest.approx(0.0, abs=0.01)
+        pass_timer.start.assert_called_once()
+
+    @patch('utils.weather_sat_predict.predict_passes')
     def test_refresh_passes_disabled(self, mock_predict):
         """_refresh_passes() should do nothing when disabled."""
         scheduler = WeatherSatScheduler()
@@ -399,7 +435,7 @@ class TestWeatherSatScheduler:
 
         mock_predict.assert_not_called()
 
-    @patch('utils.weather_sat_scheduler.predict_passes')
+    @patch('utils.weather_sat_predict.predict_passes')
     def test_refresh_passes_error_handling(self, mock_predict):
         """_refresh_passes() should handle prediction errors."""
         mock_predict.side_effect = Exception('TLE error')
@@ -510,7 +546,7 @@ class TestWeatherSatScheduler:
 
         mock_decoder = MagicMock()
         mock_decoder.is_running = False
-        mock_decoder.start.return_value = True
+        mock_decoder.start.return_value = (True, None)
         mock_get.return_value = mock_decoder
 
         mock_timer_instance = MagicMock()
@@ -554,7 +590,7 @@ class TestWeatherSatScheduler:
 
         mock_decoder = MagicMock()
         mock_decoder.is_running = False
-        mock_decoder.start.return_value = False
+        mock_decoder.start.return_value = (False, 'Start failed')
         mock_get.return_value = mock_decoder
 
         pass_data = {
@@ -716,10 +752,28 @@ class TestSchedulerConfiguration:
         assert WEATHER_SAT_CAPTURE_BUFFER_SECONDS >= 0
 
 
+class TestUtcIsoParsing:
+    """Tests for UTC ISO timestamp parsing."""
+
+    def test_parse_utc_iso_with_z_suffix(self):
+        """_parse_utc_iso should handle Z timestamps."""
+        dt = _parse_utc_iso('2026-02-19T12:34:56Z')
+        assert dt.tzinfo == timezone.utc
+        assert dt.hour == 12
+        assert dt.minute == 34
+        assert dt.second == 56
+
+    def test_parse_utc_iso_with_legacy_suffix(self):
+        """_parse_utc_iso should handle legacy +00:00Z timestamps."""
+        dt = _parse_utc_iso('2026-02-19T12:34:56+00:00Z')
+        assert dt.tzinfo == timezone.utc
+        assert dt.hour == 12
+
+
 class TestSchedulerIntegration:
     """Integration tests for scheduler."""
 
-    @patch('utils.weather_sat_scheduler.predict_passes')
+    @patch('utils.weather_sat_predict.predict_passes')
     @patch('utils.weather_sat_scheduler.get_weather_sat_decoder')
     @patch('threading.Timer')
     def test_full_scheduling_cycle(self, mock_timer, mock_get_decoder, mock_predict):
@@ -744,7 +798,7 @@ class TestSchedulerIntegration:
 
         mock_decoder = MagicMock()
         mock_decoder.is_running = False
-        mock_decoder.start.return_value = True
+        mock_decoder.start.return_value = (True, None)
         mock_get_decoder.return_value = mock_decoder
 
         scheduler = WeatherSatScheduler()

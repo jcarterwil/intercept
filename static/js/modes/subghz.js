@@ -1754,7 +1754,7 @@ const SubGhz = (function() {
         // Grid
         ctx.strokeStyle = '#1a1f2e';
         ctx.lineWidth = 1;
-        ctx.font = '10px JetBrains Mono, monospace';
+        ctx.font = '10px Roboto Condensed, monospace';
         ctx.fillStyle = '#666';
 
         for (let db = powerMin; db <= powerMax; db += 20) {
@@ -1824,7 +1824,7 @@ const SubGhz = (function() {
             ctx.lineTo(x + 4, y - 2);
             ctx.closePath();
             ctx.fill();
-            ctx.font = '9px JetBrains Mono, monospace';
+            ctx.font = '9px Roboto Condensed, monospace';
             ctx.fillStyle = 'rgba(255, 170, 0, 0.8)';
             ctx.textAlign = 'center';
             ctx.fillText(peak.freq.toFixed(1), x, y - 10);

@@ -318,15 +318,16 @@ class SubGhzManager:
         trigger_post_ms: int = 700,
         device_serial: str | None = None,
     ) -> dict:
+        # Pre-lock: tool availability & device detection (blocking I/O)
+        if not self.check_hackrf():
+            return {'status': 'error', 'message': 'hackrf_transfer not found'}
+        device_err = self._require_hackrf_device()
+        if device_err:
+            return {'status': 'error', 'message': device_err}
+
         with self._lock:
             if self.active_mode != 'idle':
                 return {'status': 'error', 'message': f'Already running: {self.active_mode}'}
-
-            if not self.check_hackrf():
-                return {'status': 'error', 'message': 'hackrf_transfer not found'}
-            device_err = self._require_hackrf_device()
-            if device_err:
-                return {'status': 'error', 'message': device_err}
 
             # Validate gains
             lna_gain = max(SUBGHZ_LNA_GAIN_MIN, min(SUBGHZ_LNA_GAIN_MAX, lna_gain))
@@ -1134,6 +1135,7 @@ class SubGhzManager:
     def stop_receive(self) -> dict:
         thread_to_join: threading.Thread | None = None
         file_handle: BinaryIO | None = None
+        proc_to_terminate: subprocess.Popen | None = None
         with self._lock:
             if not self._rx_process or self._rx_process.poll() is not None:
                 return {'status': 'not_running'}
@@ -1142,10 +1144,13 @@ class SubGhzManager:
             thread_to_join = self._rx_thread
             self._rx_thread = None
             file_handle = self._rx_file_handle
-
-            safe_terminate(self._rx_process)
-            unregister_process(self._rx_process)
+            proc_to_terminate = self._rx_process
             self._rx_process = None
+
+        # Terminate outside lock to avoid blocking other operations
+        if proc_to_terminate:
+            safe_terminate(proc_to_terminate)
+            unregister_process(proc_to_terminate)
 
         if thread_to_join and thread_to_join.is_alive():
             thread_to_join.join(timeout=2.0)
@@ -1276,17 +1281,18 @@ class SubGhzManager:
         decode_profile: str = 'weather',
         device_serial: str | None = None,
     ) -> dict:
+        # Pre-lock: tool availability & device detection (blocking I/O)
+        if not self.check_hackrf():
+            return {'status': 'error', 'message': 'hackrf_transfer not found'}
+        if not self.check_rtl433():
+            return {'status': 'error', 'message': 'rtl_433 not found'}
+        device_err = self._require_hackrf_device()
+        if device_err:
+            return {'status': 'error', 'message': device_err}
+
         with self._lock:
             if self.active_mode != 'idle':
                 return {'status': 'error', 'message': f'Already running: {self.active_mode}'}
-
-            if not self.check_hackrf():
-                return {'status': 'error', 'message': 'hackrf_transfer not found'}
-            if not self.check_rtl433():
-                return {'status': 'error', 'message': 'rtl_433 not found'}
-            device_err = self._require_hackrf_device()
-            if device_err:
-                return {'status': 'error', 'message': device_err}
 
             # Keep decode bandwidth conservative for stability. 2 Msps is enough
             # for common SubGHz protocols while staying within HackRF support.
@@ -1835,6 +1841,9 @@ class SubGhzManager:
             pass
 
     def stop_decode(self) -> dict:
+        hackrf_proc: subprocess.Popen | None = None
+        rtl433_proc: subprocess.Popen | None = None
+
         with self._lock:
             hackrf_running = (
                 self._decode_hackrf_process
@@ -1852,35 +1861,42 @@ class SubGhzManager:
             # preventing it from spawning a new hackrf_transfer during cleanup.
             self._decode_stop = True
 
-            # Terminate upstream (hackrf_transfer) first, then consumer (rtl_433)
-            if self._decode_hackrf_process:
-                safe_terminate(self._decode_hackrf_process)
-                unregister_process(self._decode_hackrf_process)
-                self._decode_hackrf_process = None
-
-            if self._decode_process:
-                safe_terminate(self._decode_process)
-                unregister_process(self._decode_process)
-                self._decode_process = None
+            # Grab process refs and clear state inside lock
+            hackrf_proc = self._decode_hackrf_process
+            self._decode_hackrf_process = None
+            rtl433_proc = self._decode_process
+            self._decode_process = None
 
             self._decode_frequency_hz = 0
             self._decode_sample_rate = 0
             self._decode_start_time = 0
 
-            # Clean up any hackrf_transfer spawned during the race window
-            time.sleep(0.1)
+        # Terminate outside lock — upstream (hackrf_transfer) first, then consumer (rtl_433)
+        if hackrf_proc:
+            safe_terminate(hackrf_proc)
+            unregister_process(hackrf_proc)
+        if rtl433_proc:
+            safe_terminate(rtl433_proc)
+            unregister_process(rtl433_proc)
+
+        # Clean up any hackrf_transfer spawned during the race window
+        time.sleep(0.1)
+        race_proc: subprocess.Popen | None = None
+        with self._lock:
             if self._decode_hackrf_process:
-                safe_terminate(self._decode_hackrf_process)
-                unregister_process(self._decode_hackrf_process)
+                race_proc = self._decode_hackrf_process
                 self._decode_hackrf_process = None
+        if race_proc:
+            safe_terminate(race_proc)
+            unregister_process(race_proc)
 
-            self._emit({
-                'type': 'status',
-                'mode': 'idle',
-                'status': 'stopped',
-            })
+        self._emit({
+            'type': 'status',
+            'mode': 'idle',
+            'status': 'stopped',
+        })
 
-            return {'status': 'stopped'}
+        return {'status': 'stopped'}
 
     # ------------------------------------------------------------------
     # TRANSMIT (replay via hackrf_transfer -t)
@@ -1929,102 +1945,109 @@ class SubGhzManager:
         duration_seconds: float | None = None,
         device_serial: str | None = None,
     ) -> dict:
+        # Pre-lock: tool availability & device detection (blocking I/O)
+        if not self.check_hackrf():
+            return {'status': 'error', 'message': 'hackrf_transfer not found'}
+        device_err = self._require_hackrf_device()
+        if device_err:
+            return {'status': 'error', 'message': device_err}
+
+        # Pre-lock: capture lookup, validation, and segment I/O (can be large)
+        capture = self._load_capture(capture_id)
+        if not capture:
+            return {'status': 'error', 'message': f'Capture not found: {capture_id}'}
+
+        freq_error = self.validate_tx_frequency(capture.frequency_hz)
+        if freq_error:
+            return {'status': 'error', 'message': freq_error}
+
+        tx_gain = max(SUBGHZ_TX_VGA_GAIN_MIN, min(SUBGHZ_TX_VGA_GAIN_MAX, tx_gain))
+        max_duration = max(1, min(SUBGHZ_TX_MAX_DURATION, max_duration))
+
+        iq_path = self._captures_dir / capture.filename
+        if not iq_path.exists():
+            return {'status': 'error', 'message': 'IQ file missing'}
+
+        # Build segment file outside lock (potentially megabytes of read/write)
+        tx_path = iq_path
+        segment_info = None
+        segment_path_for_cleanup: Path | None = None
+        if start_seconds is not None or duration_seconds is not None:
+            try:
+                start_s = max(0.0, float(start_seconds or 0.0))
+            except (TypeError, ValueError):
+                return {'status': 'error', 'message': 'Invalid start_seconds'}
+            try:
+                seg_s = None if duration_seconds is None else float(duration_seconds)
+            except (TypeError, ValueError):
+                return {'status': 'error', 'message': 'Invalid duration_seconds'}
+            if seg_s is not None and seg_s <= 0:
+                return {'status': 'error', 'message': 'duration_seconds must be greater than 0'}
+
+            file_size = iq_path.stat().st_size
+            total_duration = self._estimate_capture_duration_seconds(capture, file_size)
+            if total_duration <= 0:
+                return {'status': 'error', 'message': 'Unable to determine capture duration for segment TX'}
+            if start_s >= total_duration:
+                return {'status': 'error', 'message': 'start_seconds is beyond end of capture'}
+
+            end_s = total_duration if seg_s is None else min(total_duration, start_s + seg_s)
+            if end_s <= start_s:
+                return {'status': 'error', 'message': 'Selected segment is empty'}
+
+            bytes_per_second = max(2, int(capture.sample_rate) * 2)
+            start_byte = int(start_s * bytes_per_second) & ~1
+            end_byte = int(end_s * bytes_per_second) & ~1
+            if end_byte <= start_byte:
+                return {'status': 'error', 'message': 'Selected segment is too short'}
+
+            segment_size = end_byte - start_byte
+            segment_name = f".txseg_{capture.capture_id}_{uuid.uuid4().hex[:8]}.iq"
+            segment_path = self._captures_dir / segment_name
+            segment_path_for_cleanup = segment_path
+            try:
+                with open(iq_path, 'rb') as src, open(segment_path, 'wb') as dst:
+                    src.seek(start_byte)
+                    remaining = segment_size
+                    while remaining > 0:
+                        chunk = src.read(min(262144, remaining))
+                        if not chunk:
+                            break
+                        dst.write(chunk)
+                        remaining -= len(chunk)
+                written = segment_path.stat().st_size if segment_path.exists() else 0
+            except OSError as exc:
+                logger.error(f"Failed to build TX segment: {exc}")
+                return {'status': 'error', 'message': 'Failed to create TX segment'}
+
+            if written < 2:
+                try:
+                    segment_path.unlink(missing_ok=True)  # type: ignore[arg-type]
+                except Exception:
+                    pass
+                return {'status': 'error', 'message': 'Selected TX segment has no IQ data'}
+
+            tx_path = segment_path
+            segment_info = {
+                'start_seconds': round(start_s, 3),
+                'duration_seconds': round(written / bytes_per_second, 3),
+                'bytes': int(written),
+            }
+
         with self._lock:
             if self.active_mode != 'idle':
+                # Clean up segment file if we prepared one
+                if segment_path_for_cleanup:
+                    try:
+                        segment_path_for_cleanup.unlink(missing_ok=True)  # type: ignore[arg-type]
+                    except Exception:
+                        pass
                 return {'status': 'error', 'message': f'Already running: {self.active_mode}'}
-
-            if not self.check_hackrf():
-                return {'status': 'error', 'message': 'hackrf_transfer not found'}
-            device_err = self._require_hackrf_device()
-            if device_err:
-                return {'status': 'error', 'message': device_err}
-
-            # Look up capture
-            capture = self._load_capture(capture_id)
-            if not capture:
-                return {'status': 'error', 'message': f'Capture not found: {capture_id}'}
-
-            # Validate TX frequency
-            freq_error = self.validate_tx_frequency(capture.frequency_hz)
-            if freq_error:
-                return {'status': 'error', 'message': freq_error}
-
-            # Enforce gain limit
-            tx_gain = max(SUBGHZ_TX_VGA_GAIN_MIN, min(SUBGHZ_TX_VGA_GAIN_MAX, tx_gain))
-
-            # Enforce max duration limit
-            max_duration = max(1, min(SUBGHZ_TX_MAX_DURATION, max_duration))
-
-            iq_path = self._captures_dir / capture.filename
-            if not iq_path.exists():
-                return {'status': 'error', 'message': 'IQ file missing'}
 
             # Clear any orphaned temp segment from a previous TX attempt.
             self._cleanup_tx_temp_file()
-
-            tx_path = iq_path
-            segment_info = None
-            if start_seconds is not None or duration_seconds is not None:
-                try:
-                    start_s = max(0.0, float(start_seconds or 0.0))
-                except (TypeError, ValueError):
-                    return {'status': 'error', 'message': 'Invalid start_seconds'}
-                try:
-                    seg_s = None if duration_seconds is None else float(duration_seconds)
-                except (TypeError, ValueError):
-                    return {'status': 'error', 'message': 'Invalid duration_seconds'}
-                if seg_s is not None and seg_s <= 0:
-                    return {'status': 'error', 'message': 'duration_seconds must be greater than 0'}
-
-                file_size = iq_path.stat().st_size
-                total_duration = self._estimate_capture_duration_seconds(capture, file_size)
-                if total_duration <= 0:
-                    return {'status': 'error', 'message': 'Unable to determine capture duration for segment TX'}
-                if start_s >= total_duration:
-                    return {'status': 'error', 'message': 'start_seconds is beyond end of capture'}
-
-                end_s = total_duration if seg_s is None else min(total_duration, start_s + seg_s)
-                if end_s <= start_s:
-                    return {'status': 'error', 'message': 'Selected segment is empty'}
-
-                bytes_per_second = max(2, int(capture.sample_rate) * 2)
-                start_byte = int(start_s * bytes_per_second) & ~1
-                end_byte = int(end_s * bytes_per_second) & ~1
-                if end_byte <= start_byte:
-                    return {'status': 'error', 'message': 'Selected segment is too short'}
-
-                segment_size = end_byte - start_byte
-                segment_name = f".txseg_{capture.capture_id}_{uuid.uuid4().hex[:8]}.iq"
-                segment_path = self._captures_dir / segment_name
-                try:
-                    with open(iq_path, 'rb') as src, open(segment_path, 'wb') as dst:
-                        src.seek(start_byte)
-                        remaining = segment_size
-                        while remaining > 0:
-                            chunk = src.read(min(262144, remaining))
-                            if not chunk:
-                                break
-                            dst.write(chunk)
-                            remaining -= len(chunk)
-                    written = segment_path.stat().st_size if segment_path.exists() else 0
-                except OSError as exc:
-                    logger.error(f"Failed to build TX segment: {exc}")
-                    return {'status': 'error', 'message': 'Failed to create TX segment'}
-
-                if written < 2:
-                    try:
-                        segment_path.unlink(missing_ok=True)  # type: ignore[arg-type]
-                    except Exception:
-                        pass
-                    return {'status': 'error', 'message': 'Selected TX segment has no IQ data'}
-
-                tx_path = segment_path
-                self._tx_temp_file = segment_path
-                segment_info = {
-                    'start_seconds': round(start_s, 3),
-                    'duration_seconds': round(written / bytes_per_second, 3),
-                    'bytes': int(written),
-                }
+            if segment_path_for_cleanup:
+                self._tx_temp_file = segment_path_for_cleanup
 
             cmd = [
                 'hackrf_transfer',
@@ -2126,6 +2149,7 @@ class SubGhzManager:
             self._cleanup_tx_temp_file()
 
     def stop_transmit(self) -> dict:
+        proc_to_terminate: subprocess.Popen | None = None
         with self._lock:
             if self._tx_watchdog:
                 self._tx_watchdog.cancel()
@@ -2135,21 +2159,25 @@ class SubGhzManager:
                 self._cleanup_tx_temp_file()
                 return {'status': 'not_running'}
 
-            safe_terminate(self._tx_process)
-            unregister_process(self._tx_process)
+            proc_to_terminate = self._tx_process
             self._tx_process = None
             duration = time.time() - self._tx_start_time if self._tx_start_time else 0
             self._tx_start_time = 0
             self._tx_capture_id = ''
             self._cleanup_tx_temp_file()
 
-            self._emit({
-                'type': 'tx_status',
-                'status': 'tx_stopped',
-                'duration_seconds': round(duration, 1),
-            })
+        # Terminate outside lock to avoid blocking other operations
+        if proc_to_terminate:
+            safe_terminate(proc_to_terminate)
+            unregister_process(proc_to_terminate)
 
-            return {'status': 'stopped', 'duration_seconds': round(duration, 1)}
+        self._emit({
+            'type': 'tx_status',
+            'status': 'tx_stopped',
+            'duration_seconds': round(duration, 1),
+        })
+
+        return {'status': 'stopped', 'duration_seconds': round(duration, 1)}
 
     # ------------------------------------------------------------------
     # SWEEP (hackrf_sweep)
@@ -2162,15 +2190,22 @@ class SubGhzManager:
         bin_width: int = 100000,
         device_serial: str | None = None,
     ) -> dict:
+        # Pre-lock: tool availability & device detection (blocking I/O)
+        if not self.check_sweep():
+            return {'status': 'error', 'message': 'hackrf_sweep not found'}
+        device_err = self._require_hackrf_device()
+        if device_err:
+            return {'status': 'error', 'message': device_err}
+
+        # Wait for previous sweep thread to exit (blocking) before lock
+        if self._sweep_thread and self._sweep_thread.is_alive():
+            self._sweep_thread.join(timeout=2.0)
+            if self._sweep_thread.is_alive():
+                return {'status': 'error', 'message': 'Previous sweep still shutting down'}
+
         with self._lock:
             if self.active_mode != 'idle':
                 return {'status': 'error', 'message': f'Already running: {self.active_mode}'}
-
-            if not self.check_sweep():
-                return {'status': 'error', 'message': 'hackrf_sweep not found'}
-            device_err = self._require_hackrf_device()
-            if device_err:
-                return {'status': 'error', 'message': device_err}
 
             cmd = [
                 'hackrf_sweep',
@@ -2181,12 +2216,6 @@ class SubGhzManager:
                 cmd.extend(['-d', device_serial])
 
             logger.info(f"SubGHz sweep: {' '.join(cmd)}")
-
-            # Wait for previous sweep thread to exit
-            if self._sweep_thread and self._sweep_thread.is_alive():
-                self._sweep_thread.join(timeout=2.0)
-                if self._sweep_thread.is_alive():
-                    return {'status': 'error', 'message': 'Previous sweep still shutting down'}
 
             try:
                 self._sweep_process = subprocess.Popen(
@@ -2313,14 +2342,19 @@ class SubGhzManager:
             logger.error(f"Error reading sweep output: {e}")
 
     def stop_sweep(self) -> dict:
+        proc_to_terminate: subprocess.Popen | None = None
         with self._lock:
             self._sweep_running = False
             if not self._sweep_process or self._sweep_process.poll() is not None:
                 return {'status': 'not_running'}
 
-            safe_terminate(self._sweep_process)
-            unregister_process(self._sweep_process)
+            proc_to_terminate = self._sweep_process
             self._sweep_process = None
+
+        # Terminate outside lock to avoid blocking other operations
+        if proc_to_terminate:
+            safe_terminate(proc_to_terminate)
+            unregister_process(proc_to_terminate)
 
         # Join sweep thread outside the lock to avoid blocking other operations
         if self._sweep_thread and self._sweep_thread.is_alive():

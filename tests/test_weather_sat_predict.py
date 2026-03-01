@@ -7,10 +7,10 @@ and ground track generation.
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 import pytest
 
-from utils.weather_sat_predict import predict_passes
+from utils.weather_sat_predict import _format_utc_iso, predict_passes
 
 
 class TestPredictPasses:
@@ -673,3 +673,20 @@ class TestPassDataStructure:
         with patch.dict('sys.modules', {'skyfield': None, 'skyfield.api': None}):
             with pytest.raises((ImportError, AttributeError)):
                 predict_passes(lat=51.5, lon=-0.1)
+
+
+class TestTimestampFormatting:
+    """Tests for UTC timestamp serialization helpers."""
+
+    def test_format_utc_iso_from_aware_datetime(self):
+        """Aware UTC datetimes should not get a duplicate UTC suffix."""
+        dt = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        value = _format_utc_iso(dt)
+        assert value == '2024-01-01T12:00:00Z'
+        assert '+00:00Z' not in value
+
+    def test_format_utc_iso_from_naive_datetime(self):
+        """Naive datetimes should be treated as UTC and serialized consistently."""
+        dt = datetime(2024, 1, 1, 12, 0, 0)
+        value = _format_utc_iso(dt)
+        assert value == '2024-01-01T12:00:00Z'

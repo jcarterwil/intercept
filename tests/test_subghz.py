@@ -92,9 +92,14 @@ class TestReceive:
             assert manager.active_mode == 'rx'
 
     def test_start_receive_already_running(self, manager):
+        import time as _time
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None
         manager._rx_process = mock_proc
+        # Pre-lock device checks now run before active_mode guard
+        manager._hackrf_available = True
+        manager._hackrf_device_cache = True
+        manager._hackrf_device_cache_ts = _time.time()
 
         result = manager.start_receive(frequency_hz=433920000)
         assert result['status'] == 'error'
@@ -195,10 +200,25 @@ class TestTxSafety:
             assert result['status'] == 'error'
             assert 'outside allowed TX bands' in result['message']
 
-    def test_transmit_already_running(self, manager):
+    def test_transmit_already_running(self, manager, tmp_data_dir):
+        import time as _time
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None
         manager._rx_process = mock_proc
+        # Pre-lock device checks now run before active_mode guard
+        manager._hackrf_available = True
+        manager._hackrf_device_cache = True
+        manager._hackrf_device_cache_ts = _time.time()
+        # Capture lookup also runs pre-lock now; provide a valid capture + IQ file
+        meta = {
+            'id': 'test123',
+            'filename': 'test.iq',
+            'frequency_hz': 433920000,
+            'sample_rate': 2000000,
+            'timestamp': '2025-01-01T00:00:00',
+        }
+        (tmp_data_dir / 'captures' / 'test.json').write_text(json.dumps(meta))
+        (tmp_data_dir / 'captures' / 'test.iq').write_bytes(b'\x00' * 64)
 
         result = manager.transmit(capture_id='test123')
         assert result['status'] == 'error'
@@ -452,6 +472,7 @@ class TestSweep:
             assert result['status'] == 'error'
 
     def test_start_sweep_success(self, manager):
+        import time as _time
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None
         mock_proc.stdout = MagicMock()
@@ -460,6 +481,8 @@ class TestSweep:
              patch('subprocess.Popen', return_value=mock_proc), \
              patch('utils.subghz.register_process'):
             manager._sweep_available = None
+            manager._hackrf_device_cache = True
+            manager._hackrf_device_cache_ts = _time.time()
             result = manager.start_sweep(freq_start_mhz=300, freq_end_mhz=928)
             assert result['status'] == 'started'
 
@@ -517,8 +540,11 @@ class TestDecode:
         with patch('shutil.which', return_value='/usr/bin/tool'), \
              patch('subprocess.Popen', side_effect=popen_side_effect) as mock_popen, \
              patch('utils.subghz.register_process'):
+            import time as _time
             manager._hackrf_available = None
             manager._rtl433_available = None
+            manager._hackrf_device_cache = True
+            manager._hackrf_device_cache_ts = _time.time()
             result = manager.start_decode(
                 frequency_hz=433920000,
                 sample_rate=2000000,

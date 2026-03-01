@@ -166,9 +166,11 @@ def _fetch_iss_realtime(observer_lat: Optional[float] = None, observer_lon: Opti
 @satellite_bp.route('/dashboard')
 def satellite_dashboard():
     """Popout satellite tracking dashboard."""
+    embedded = request.args.get('embedded', 'false') == 'true'
     return render_template(
         'satellite_dashboard.html',
         shared_observer_location=SHARED_OBSERVER_LOCATION_ENABLED,
+        embedded=embedded,
     )
 
 
@@ -588,14 +590,14 @@ def list_tracked_satellites():
 def add_tracked_satellites_endpoint():
     """Add one or more tracked satellites."""
     global _tle_cache
-    data = request.json
+    data = request.get_json(silent=True)
     if not data:
         return jsonify({'status': 'error', 'message': 'No data provided'}), 400
 
     # Accept a single satellite dict or a list
     sat_list = data if isinstance(data, list) else [data]
 
-    added = 0
+    normalized: list[dict] = []
     for sat in sat_list:
         norad_id = str(sat.get('norad_id', sat.get('norad', '')))
         name = sat.get('name', '')
@@ -605,19 +607,46 @@ def add_tracked_satellites_endpoint():
         tle2 = sat.get('tle_line2', sat.get('tle2'))
         enabled = sat.get('enabled', True)
 
-        if add_tracked_satellite(norad_id, name, tle1, tle2, enabled):
-            added += 1
+        normalized.append({
+            'norad_id': norad_id,
+            'name': name,
+            'tle_line1': tle1,
+            'tle_line2': tle2,
+            'enabled': bool(enabled),
+            'builtin': False,
+        })
 
         # Also inject into TLE cache if we have TLE data
         if tle1 and tle2:
             cache_key = name.replace(' ', '-').upper()
             _tle_cache[cache_key] = (name, tle1, tle2)
 
-    return jsonify({
+    # Single inserts preserve previous behavior; list inserts use DB-level bulk path.
+    if len(normalized) == 1:
+        sat = normalized[0]
+        added = 1 if add_tracked_satellite(
+            sat['norad_id'],
+            sat['name'],
+            sat.get('tle_line1'),
+            sat.get('tle_line2'),
+            sat.get('enabled', True),
+            sat.get('builtin', False),
+        ) else 0
+    else:
+        added = bulk_add_tracked_satellites(normalized)
+
+    response_payload = {
         'status': 'success',
         'added': added,
-        'satellites': get_tracked_satellites(),
-    })
+        'processed': len(normalized),
+    }
+
+    # Returning all tracked satellites for very large imports can stall the UI.
+    include_satellites = request.args.get('include_satellites', '').lower() == 'true'
+    if include_satellites or len(normalized) <= 32:
+        response_payload['satellites'] = get_tracked_satellites()
+
+    return jsonify(response_payload)
 
 
 @satellite_bp.route('/tracked/<norad_id>', methods=['PUT'])

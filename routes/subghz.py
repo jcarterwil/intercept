@@ -13,6 +13,7 @@ from flask import Blueprint, jsonify, request, Response, send_file
 from utils.logging import get_logger
 from utils.sse import sse_stream
 from utils.subghz import get_subghz_manager
+from utils.event_pipeline import process_event
 from utils.constants import (
     SUBGHZ_FREQ_MIN_MHZ,
     SUBGHZ_FREQ_MAX_MHZ,
@@ -34,6 +35,10 @@ _subghz_queue: queue.Queue = queue.Queue(maxsize=200)
 
 def _event_callback(event: dict) -> None:
     """Forward SubGhzManager events to the SSE queue."""
+    try:
+        process_event('subghz', event, event.get('type'))
+    except Exception:
+        pass
     try:
         _subghz_queue.put_nowait(event)
     except queue.Full:

@@ -73,9 +73,10 @@ class TestWeatherSatDecoder:
             callback = MagicMock()
             decoder.set_callback(callback)
 
-            success = decoder.start(satellite='NOAA-18', device_index=0, gain=40.0)
+            success, error_msg = decoder.start(satellite='NOAA-18', device_index=0, gain=40.0)
 
             assert success is False
+            assert error_msg is not None
             callback.assert_called()
             progress = callback.call_args[0][0]
             assert progress.status == 'error'
@@ -88,7 +89,7 @@ class TestWeatherSatDecoder:
             callback = MagicMock()
             decoder.set_callback(callback)
 
-            success = decoder.start(satellite='FAKE-SAT', device_index=0, gain=40.0)
+            success, error_msg = decoder.start(satellite='FAKE-SAT', device_index=0, gain=40.0)
 
             assert success is False
             callback.assert_called()
@@ -113,7 +114,7 @@ class TestWeatherSatDecoder:
             callback = MagicMock()
             decoder.set_callback(callback)
 
-            success = decoder.start(
+            success, error_msg = decoder.start(
                 satellite='NOAA-18',
                 device_index=0,
                 gain=40.0,
@@ -121,6 +122,7 @@ class TestWeatherSatDecoder:
             )
 
             assert success is True
+            assert error_msg is None
             assert decoder.is_running is True
             assert decoder.current_satellite == 'NOAA-18'
             assert decoder.current_frequency == 137.9125
@@ -136,15 +138,79 @@ class TestWeatherSatDecoder:
 
     @patch('subprocess.Popen')
     @patch('pty.openpty')
+    @patch('utils.weather_sat.register_process')
+    def test_start_rtl_tcp_uses_rtltcp_source(self, mock_register, mock_pty, mock_popen):
+        """start() with rtl_tcp should use --source rtltcp instead of rtlsdr."""
+        with patch('shutil.which', return_value='/usr/bin/satdump'):
+            mock_pty.return_value = (10, 11)
+            mock_process = MagicMock()
+            mock_process.poll.return_value = None
+            mock_popen.return_value = mock_process
+
+            decoder = WeatherSatDecoder()
+            callback = MagicMock()
+            decoder.set_callback(callback)
+
+            success, error_msg = decoder.start(
+                satellite='NOAA-18',
+                device_index=0,
+                gain=40.0,
+                rtl_tcp_host='192.168.1.100',
+                rtl_tcp_port=1234,
+            )
+
+            assert success is True
+            assert error_msg is None
+
+            mock_popen.assert_called_once()
+            cmd = mock_popen.call_args[0][0]
+            assert '--source' in cmd
+            source_idx = cmd.index('--source')
+            assert cmd[source_idx + 1] == 'rtltcp'
+            assert '--ip_address' in cmd
+            assert '192.168.1.100' in cmd
+            assert '--port' in cmd
+            assert '1234' in cmd
+            # Should NOT have --source_id for remote
+            assert '--source_id' not in cmd
+
+    @patch('subprocess.Popen')
+    @patch('pty.openpty')
+    @patch('utils.weather_sat.register_process')
+    def test_start_rtl_tcp_skips_device_resolve(self, mock_register, mock_pty, mock_popen):
+        """start() with rtl_tcp should skip _resolve_device_id."""
+        with patch('shutil.which', return_value='/usr/bin/satdump'), \
+             patch('utils.weather_sat.WeatherSatDecoder._resolve_device_id') as mock_resolve:
+            mock_pty.return_value = (10, 11)
+            mock_process = MagicMock()
+            mock_process.poll.return_value = None
+            mock_popen.return_value = mock_process
+
+            decoder = WeatherSatDecoder()
+
+            success, _ = decoder.start(
+                satellite='NOAA-18',
+                device_index=0,
+                gain=40.0,
+                rtl_tcp_host='10.0.0.1',
+            )
+
+            assert success is True
+            mock_resolve.assert_not_called()
+
+    @patch('subprocess.Popen')
+    @patch('pty.openpty')
     def test_start_already_running(self, mock_pty, mock_popen):
         """start() should return True when already running."""
-        with patch('shutil.which', return_value='/usr/bin/satdump'):
+        with patch('shutil.which', return_value='/usr/bin/satdump'), \
+             patch('utils.weather_sat.WeatherSatDecoder._resolve_device_id', return_value='0'):
             decoder = WeatherSatDecoder()
             decoder._running = True
 
-            success = decoder.start(satellite='NOAA-18', device_index=0, gain=40.0)
+            success, error_msg = decoder.start(satellite='NOAA-18', device_index=0, gain=40.0)
 
             assert success is True
+            assert error_msg is None
             mock_popen.assert_not_called()
 
     @patch('subprocess.Popen')
@@ -159,9 +225,10 @@ class TestWeatherSatDecoder:
             callback = MagicMock()
             decoder.set_callback(callback)
 
-            success = decoder.start(satellite='NOAA-18', device_index=0, gain=40.0)
+            success, error_msg = decoder.start(satellite='NOAA-18', device_index=0, gain=40.0)
 
             assert success is False
+            assert error_msg is not None
             assert decoder.is_running is False
             callback.assert_called()
             progress = callback.call_args[0][0]
@@ -174,12 +241,13 @@ class TestWeatherSatDecoder:
             callback = MagicMock()
             decoder.set_callback(callback)
 
-            success = decoder.start_from_file(
+            success, error_msg = decoder.start_from_file(
                 satellite='NOAA-18',
                 input_file='data/test.wav',
             )
 
             assert success is False
+            assert error_msg is not None
             callback.assert_called()
 
     @patch('subprocess.Popen')
@@ -199,19 +267,21 @@ class TestWeatherSatDecoder:
 
             mock_pty.return_value = (10, 11)
             mock_process = MagicMock()
+            mock_process.poll.return_value = None  # Process still running
             mock_popen.return_value = mock_process
 
             decoder = WeatherSatDecoder()
             callback = MagicMock()
             decoder.set_callback(callback)
 
-            success = decoder.start_from_file(
+            success, error_msg = decoder.start_from_file(
                 satellite='NOAA-18',
                 input_file='data/test.wav',
                 sample_rate=1000000,
             )
 
             assert success is True
+            assert error_msg is None
             assert decoder.is_running is True
             assert decoder.current_satellite == 'NOAA-18'
 
@@ -235,7 +305,7 @@ class TestWeatherSatDecoder:
             callback = MagicMock()
             decoder.set_callback(callback)
 
-            success = decoder.start_from_file(
+            success, error_msg = decoder.start_from_file(
                 satellite='NOAA-18',
                 input_file='/etc/passwd',
             )
@@ -258,7 +328,7 @@ class TestWeatherSatDecoder:
             callback = MagicMock()
             decoder.set_callback(callback)
 
-            success = decoder.start_from_file(
+            success, error_msg = decoder.start_from_file(
                 satellite='NOAA-18',
                 input_file='data/missing.wav',
             )
@@ -425,12 +495,12 @@ class TestWeatherSatDecoder:
 
     @patch('subprocess.run')
     def test_resolve_device_id_fallback(self, mock_run):
-        """_resolve_device_id() should fall back to index string."""
+        """_resolve_device_id() should return None when no serial found."""
         mock_run.side_effect = FileNotFoundError
 
         serial = WeatherSatDecoder._resolve_device_id(0)
 
-        assert serial == '0'
+        assert serial is None
 
     def test_parse_product_name_rgb(self):
         """_parse_product_name() should identify RGB composite."""

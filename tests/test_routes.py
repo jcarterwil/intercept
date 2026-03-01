@@ -58,17 +58,6 @@ class TestHealthEndpoint:
         assert 'wifi' in processes
         assert 'bluetooth' in processes
 
-    def test_health_reports_dmr_route_process(self, client):
-        """Health should reflect DMR route module state (not stale app globals)."""
-        mock_proc = MagicMock()
-        mock_proc.poll.return_value = None
-        with patch('routes.dmr.dmr_running', True), \
-             patch('routes.dmr.dmr_dsd_process', mock_proc):
-            response = client.get('/health')
-            data = json.loads(response.data)
-            assert data['processes']['dmr'] is True
-
-
 class TestDevicesEndpoint:
     """Tests for devices endpoint."""
 

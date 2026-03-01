@@ -301,6 +301,20 @@ SUBGHZ_PRESETS = {
 
 
 # =============================================================================
+# RADIOSONDE (Weather Balloon Tracking)
+# =============================================================================
+
+# UDP port for radiosonde_auto_rx telemetry broadcast
+RADIOSONDE_UDP_PORT = 55673
+
+# Radiosonde process termination timeout
+RADIOSONDE_TERMINATE_TIMEOUT = 5
+
+# Maximum age for balloon data before cleanup (30 min — balloons move slowly)
+MAX_RADIOSONDE_AGE_SECONDS = 1800
+
+
+# =============================================================================
 # DEAUTH ATTACK DETECTION
 # =============================================================================
 

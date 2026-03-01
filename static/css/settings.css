@@ -479,6 +479,54 @@
     filter: sepia(0.35) hue-rotate(185deg) saturate(1.75) brightness(1.06) contrast(1.05);
 }
 
+/* Global Leaflet map theme: cyber overlay */
+.leaflet-container.map-theme-cyber {
+    position: relative;
+    background: #020813;
+    isolation: isolate;
+}
+
+.leaflet-container.map-theme-cyber .leaflet-tile-pane {
+    filter: sepia(0.74) hue-rotate(176deg) saturate(1.72) brightness(1.05) contrast(1.08);
+    opacity: 1;
+}
+
+/* Hard global fallback: enforce cyber tint on all Leaflet tile images */
+html.map-cyber-enabled .leaflet-container .leaflet-tile {
+    filter: sepia(0.74) hue-rotate(176deg) saturate(1.72) brightness(1.05) contrast(1.08) !important;
+}
+
+/* Hard global fallback: cyber glow + grid overlay */
+html.map-cyber-enabled .leaflet-container {
+    position: relative;
+    isolation: isolate;
+}
+
+html.map-cyber-enabled .leaflet-container::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 620;
+    background:
+        radial-gradient(95% 78% at 50% 44%, rgba(18, 170, 255, 0.17), rgba(18, 170, 255, 0) 64%),
+        linear-gradient(180deg, rgba(24, 118, 255, 0.045), rgba(24, 118, 255, 0));
+}
+
+html.map-cyber-enabled .leaflet-container::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 621;
+    opacity: 0.42;
+    mix-blend-mode: screen;
+    background-image:
+        linear-gradient(rgba(78, 188, 255, 0.14) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(78, 188, 255, 0.14) 1px, transparent 1px);
+    background-size: 52px 52px, 52px 52px;
+}
+
 /* Responsive */
 @media (max-width: 960px) {
     .settings-tabs {

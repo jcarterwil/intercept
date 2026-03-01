@@ -41,6 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bluez \
     bluetooth \
     # GPS support
+    gpsd \
     gpsd-clients \
     # Utilities
     # APRS
@@ -56,7 +57,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     soapysdr-module-airspy \
     airspy \
     limesuite \
-    hackrf \
     # Utilities
     curl \
     procps \
@@ -93,7 +93,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpulse-dev \
     libfftw3-dev \
     liblapack-dev \
-    libcodec2-dev \
+    libglib2.0-dev \
+    libxml2-dev \
     # Build dump1090
     && cd /tmp \
     && git clone --depth 1 https://github.com/flightaware/dump1090.git \
@@ -136,10 +137,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && git clone --depth 1 https://github.com/TLeconte/acarsdec.git \
     && cd acarsdec \
     && mkdir build && cd build \
-    && cmake .. -Drtl=ON \
+    && cmake .. -Drtl=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     && make \
     && cp acarsdec /usr/bin/acarsdec \
     && rm -rf /tmp/acarsdec \
+    # Build libacars (required by dumpvdl2)
+    && cd /tmp \
+    && git clone --depth 1 https://github.com/szpajder/libacars.git \
+    && cd libacars \
+    && mkdir build && cd build \
+    && cmake .. \
+    && make \
+    && make install \
+    && ldconfig \
+    && rm -rf /tmp/libacars \
+    # Build dumpvdl2 (VDL2 aircraft datalink decoder)
+    && cd /tmp \
+    && git clone --depth 1 https://github.com/szpajder/dumpvdl2.git \
+    && cd dumpvdl2 \
+    && mkdir build && cd build \
+    && cmake .. \
+    && make \
+    && cp src/dumpvdl2 /usr/bin/dumpvdl2 \
+    && rm -rf /tmp/dumpvdl2 \
     # Build slowrx (SSTV decoder) — pinned to known-good commit
     && cd /tmp \
     && git clone https://github.com/windytan/slowrx.git \
@@ -169,6 +189,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fi \
     && cd /tmp \
     && rm -rf /tmp/SatDump \
+    # Build hackrf CLI tools from source — avoids libhackrf0 version conflict
+    # between the 'hackrf' apt package and soapysdr-module-hackrf's newer libhackrf0
+    && cd /tmp \
+    && git clone --depth 1 https://github.com/greatscottgadgets/hackrf.git \
+    && cd hackrf/host \
+    && mkdir build && cd build \
+    && cmake .. \
+    && make \
+    && make install \
+    && ldconfig \
+    && rm -rf /tmp/hackrf \
+    # Install radiosonde_auto_rx (weather balloon decoder)
+    && cd /tmp \
+    && git clone --depth 1 https://github.com/projecthorus/radiosonde_auto_rx.git \
+    && cd radiosonde_auto_rx/auto_rx \
+    && pip install --no-cache-dir -r requirements.txt \
+    && bash build.sh \
+    && mkdir -p /opt/radiosonde_auto_rx/auto_rx \
+    && cp -r . /opt/radiosonde_auto_rx/auto_rx/ \
+    && chmod +x /opt/radiosonde_auto_rx/auto_rx/auto_rx.py \
+    && cd /tmp \
+    && rm -rf /tmp/radiosonde_auto_rx \
     # Build rtlamr (utility meter decoder - requires Go)
     && cd /tmp \
     && curl -fsSL "https://go.dev/dl/go1.22.5.linux-$(dpkg --print-architecture).tar.gz" | tar -C /usr/local -xz \
@@ -177,27 +219,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && go install github.com/bemasher/rtlamr@latest \
     && cp /tmp/gopath/bin/rtlamr /usr/bin/rtlamr \
     && rm -rf /usr/local/go /tmp/gopath \
-    # Build mbelib (required by DSD)
-    && cd /tmp \
-    && git clone https://github.com/lwvmobile/mbelib.git \
-    && cd mbelib \
-    && (git checkout ambe_tones || true) \
-    && mkdir build && cd build \
-    && cmake .. \
-    && make -j$(nproc) \
-    && make install \
-    && ldconfig \
-    && rm -rf /tmp/mbelib \
-    # Build DSD-FME (Digital Speech Decoder for DMR/P25)
-    && cd /tmp \
-    && git clone --depth 1 https://github.com/lwvmobile/dsd-fme.git \
-    && cd dsd-fme \
-    && mkdir build && cd build \
-    && cmake .. \
-    && make -j$(nproc) \
-    && make install \
-    && ldconfig \
-    && rm -rf /tmp/dsd-fme \
     # Cleanup build tools to reduce image size
     # libgtk-3-dev is explicitly removed; runtime GTK libs remain for slowrx
     && apt-get remove -y \
@@ -225,7 +246,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpulse-dev \
     libfftw3-dev \
     liblapack-dev \
-    libcodec2-dev \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
@@ -240,10 +260,11 @@ COPY . .
 RUN if [ -f /app/bin/rtlamr ]; then cp /app/bin/rtlamr /usr/bin/ && chmod +x /usr/bin/rtlamr; fi
 
 # Create data directory for persistence
-RUN mkdir -p /app/data /app/data/weather_sat
+RUN mkdir -p /app/data /app/data/weather_sat /app/data/radiosonde/logs
 
 # Expose web interface port
 EXPOSE 5050
+EXPOSE 5443
 
 # Environment variables with defaults
 ENV INTERCEPT_HOST=0.0.0.0 \
@@ -256,4 +277,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -sf http://localhost:5050/health || exit 1
 
 # Run the application
-CMD ["python", "intercept.py"]
+CMD ["/bin/bash", "start.sh"]

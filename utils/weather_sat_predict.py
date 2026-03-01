@@ -14,6 +14,15 @@ from utils.weather_sat import WEATHER_SATELLITES
 logger = get_logger('intercept.weather_sat_predict')
 
 
+def _format_utc_iso(dt: datetime.datetime) -> str:
+    """Return an ISO8601 UTC timestamp with a single timezone designator."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    else:
+        dt = dt.astimezone(datetime.timezone.utc)
+    return dt.isoformat().replace('+00:00', 'Z')
+
+
 def predict_passes(
     lat: float,
     lon: float,
@@ -38,8 +47,9 @@ def predict_passes(
     Raises:
         ImportError: If skyfield is not installed.
     """
-    from skyfield.api import load, wgs84, EarthSatellite
     from skyfield.almanac import find_discrete
+    from skyfield.api import EarthSatellite, load, wgs84
+
     from data.satellites import TLE_SATELLITES
 
     # Use live TLE cache from satellite module if available (refreshed from CelesTrak)
@@ -100,12 +110,14 @@ def predict_passes(
                     i += 1
                     continue
 
+                rise_dt = rise_time.utc_datetime()
+                set_dt = set_time.utc_datetime()
                 duration_seconds = (
-                    set_time.utc_datetime() - rise_time.utc_datetime()
+                    set_dt - rise_dt
                 ).total_seconds()
                 duration_minutes = round(duration_seconds / 60, 1)
 
-                # Calculate max elevation and trajectory
+                # Calculate max elevation (always) and trajectory points (only if requested)
                 max_el = 0.0
                 max_el_az = 0.0
                 trajectory: list[dict[str, float]] = []
@@ -141,14 +153,14 @@ def predict_passes(
                 _, set_az, _ = set_topo.altaz()
 
                 pass_data: dict[str, Any] = {
-                    'id': f"{sat_key}_{rise_time.utc_datetime().strftime('%Y%m%d%H%M')}",
+                    'id': f"{sat_key}_{rise_dt.strftime('%Y%m%d%H%M%S')}",
                     'satellite': sat_key,
                     'name': sat_info['name'],
                     'frequency': sat_info['frequency'],
                     'mode': sat_info['mode'],
-                    'startTime': rise_time.utc_datetime().strftime('%Y-%m-%d %H:%M UTC'),
-                    'startTimeISO': rise_time.utc_datetime().isoformat(),
-                    'endTimeISO': set_time.utc_datetime().isoformat(),
+                    'startTime': rise_dt.strftime('%Y-%m-%d %H:%M UTC'),
+                    'startTimeISO': _format_utc_iso(rise_dt),
+                    'endTimeISO': _format_utc_iso(set_dt),
                     'maxEl': round(max_el, 1),
                     'maxElAz': round(max_el_az, 1),
                     'riseAz': round(rise_az.degrees, 1),

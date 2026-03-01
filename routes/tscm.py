@@ -61,6 +61,7 @@ from utils.tscm.device_identity import (
     ingest_wifi_dict,
 )
 from utils.event_pipeline import process_event
+from utils.sse import sse_stream_fanout
 
 # Import unified Bluetooth scanner helper for TSCM integration
 try:
@@ -629,24 +630,17 @@ def sweep_status():
 @tscm_bp.route('/sweep/stream')
 def sweep_stream():
     """SSE stream for real-time sweep updates."""
-    def generate():
-        while True:
-            try:
-                if tscm_queue:
-                    msg = tscm_queue.get(timeout=1)
-                    try:
-                        process_event('tscm', msg, msg.get('type'))
-                    except Exception:
-                        pass
-                    yield f"data: {json.dumps(msg)}\n\n"
-                else:
-                    time.sleep(1)
-                    yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
-            except queue.Empty:
-                yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
+    def _on_msg(msg: dict[str, Any]) -> None:
+        process_event('tscm', msg, msg.get('type'))
 
     return Response(
-        generate(),
+        sse_stream_fanout(
+            source_queue=tscm_queue,
+            channel_key='tscm',
+            timeout=1.0,
+            keepalive_interval=30.0,
+            on_message=_on_msg,
+        ),
         mimetype='text/event-stream',
         headers={
             'Cache-Control': 'no-cache',
@@ -1351,7 +1345,7 @@ def _scan_rf_signals(
     sweep_ranges: list[dict] | None = None
 ) -> list[dict]:
     """
-    Scan for RF signals using SDR (rtl_power).
+    Scan for RF signals using SDR (rtl_power or hackrf_sweep).
 
     Scans common surveillance frequency bands:
     - 88-108 MHz: FM broadcast (potential FM bugs)
@@ -1381,38 +1375,49 @@ def _scan_rf_signals(
 
     logger.info(f"Starting RF scan (device={sdr_device})")
 
+    # Detect available SDR devices and sweep tools
     rtl_power_path = shutil.which('rtl_power')
-    if not rtl_power_path:
-        logger.warning("rtl_power not found in PATH, RF scanning unavailable")
+    hackrf_sweep_path = shutil.which('hackrf_sweep')
+
+    sdr_type = None
+    sweep_tool_path = None
+
+    try:
+        from utils.sdr import SDRFactory
+        from utils.sdr.base import SDRType
+        devices = SDRFactory.detect_devices()
+        rtlsdr_available = any(d.sdr_type == SDRType.RTL_SDR for d in devices)
+        hackrf_available = any(d.sdr_type == SDRType.HACKRF for d in devices)
+    except ImportError:
+        rtlsdr_available = False
+        hackrf_available = False
+
+    # Pick the best available SDR + sweep tool combo
+    if rtlsdr_available and rtl_power_path:
+        sdr_type = 'rtlsdr'
+        sweep_tool_path = rtl_power_path
+        logger.info(f"Using RTL-SDR with rtl_power at: {rtl_power_path}")
+    elif hackrf_available and hackrf_sweep_path:
+        sdr_type = 'hackrf'
+        sweep_tool_path = hackrf_sweep_path
+        logger.info(f"Using HackRF with hackrf_sweep at: {hackrf_sweep_path}")
+    elif rtl_power_path:
+        # Tool exists but no device detected — try anyway (detection may have failed)
+        sdr_type = 'rtlsdr'
+        sweep_tool_path = rtl_power_path
+        logger.info(f"No SDR detected but rtl_power found, attempting RTL-SDR scan")
+    elif hackrf_sweep_path:
+        sdr_type = 'hackrf'
+        sweep_tool_path = hackrf_sweep_path
+        logger.info(f"No SDR detected but hackrf_sweep found, attempting HackRF scan")
+
+    if not sweep_tool_path:
+        logger.warning("No supported sweep tool found (rtl_power or hackrf_sweep)")
         _emit_event('rf_status', {
             'status': 'error',
-            'message': 'rtl_power not installed. Install rtl-sdr package for RF scanning.',
+            'message': 'No SDR sweep tool installed. Install rtl-sdr (rtl_power) or HackRF (hackrf_sweep) for RF scanning.',
         })
         return signals
-
-    logger.info(f"Found rtl_power at: {rtl_power_path}")
-
-    # Test if RTL-SDR device is accessible
-    rtl_test_path = shutil.which('rtl_test')
-    if rtl_test_path:
-        try:
-            test_result = subprocess.run(
-                [rtl_test_path, '-t'],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if 'No supported devices found' in test_result.stderr or test_result.returncode != 0:
-                logger.warning("No RTL-SDR device found")
-                _emit_event('rf_status', {
-                    'status': 'error',
-                    'message': 'No RTL-SDR device connected. Connect an RTL-SDR dongle for RF scanning.',
-                })
-                return signals
-        except subprocess.TimeoutExpired:
-            pass  # Device might be busy, continue anyway
-        except Exception as e:
-            logger.debug(f"rtl_test check failed: {e}")
 
     # Define frequency bands to scan (in Hz)
     # Format: (start_freq, end_freq, bin_size, description)
@@ -1454,7 +1459,7 @@ def _scan_rf_signals(
 
     try:
         # Build device argument
-        device_arg = ['-d', str(sdr_device if sdr_device is not None else 0)]
+        device_idx = sdr_device if sdr_device is not None else 0
 
         # Scan each band and look for strong signals
         for start_freq, end_freq, bin_size, band_name in scan_bands:
@@ -1464,15 +1469,27 @@ def _scan_rf_signals(
             logger.info(f"Scanning {band_name} ({start_freq/1e6:.1f}-{end_freq/1e6:.1f} MHz)")
 
             try:
-                # Run rtl_power for a quick sweep of this band
-                cmd = [
-                    rtl_power_path,
-                    '-f', f'{start_freq}:{end_freq}:{bin_size}',
-                    '-g', '40',           # Gain
-                    '-i', '1',            # Integration interval (1 second)
-                    '-1',                 # Single shot mode
-                    '-c', '20%',          # Crop 20% of edges
-                ] + device_arg + [tmp_path]
+                # Build sweep command based on SDR type
+                if sdr_type == 'hackrf':
+                    cmd = [
+                        sweep_tool_path,
+                        '-f', f'{int(start_freq / 1e6)}:{int(end_freq / 1e6)}',
+                        '-w', str(bin_size),
+                        '-1',  # Single sweep
+                    ]
+                    output_mode = 'stdout'
+                else:
+                    cmd = [
+                        sweep_tool_path,
+                        '-f', f'{start_freq}:{end_freq}:{bin_size}',
+                        '-g', '40',           # Gain
+                        '-i', '1',            # Integration interval (1 second)
+                        '-1',                 # Single shot mode
+                        '-c', '20%',          # Crop 20% of edges
+                        '-d', str(device_idx),
+                        tmp_path,
+                    ]
+                    output_mode = 'file'
 
                 logger.debug(f"Running: {' '.join(cmd)}")
 
@@ -1484,9 +1501,14 @@ def _scan_rf_signals(
                 )
 
                 if result.returncode != 0:
-                    logger.warning(f"rtl_power returned {result.returncode}: {result.stderr}")
+                    logger.warning(f"{os.path.basename(sweep_tool_path)} returned {result.returncode}: {result.stderr}")
 
-                # Parse the CSV output
+                # For HackRF, write stdout CSV data to temp file for unified parsing
+                if output_mode == 'stdout' and result.stdout:
+                    with open(tmp_path, 'w') as f:
+                        f.write(result.stdout)
+
+                # Parse the CSV output (same format for both rtl_power and hackrf_sweep)
                 if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0:
                     with open(tmp_path, 'r') as f:
                         for line in f:
@@ -1494,13 +1516,12 @@ def _scan_rf_signals(
                             if len(parts) >= 7:
                                 try:
                                     # CSV format: date, time, hz_low, hz_high, hz_step, samples, db_values...
-                                    hz_low = int(parts[2])
-                                    hz_high = int(parts[3])
-                                    hz_step = float(parts[4])
+                                    hz_low = int(parts[2].strip())
+                                    hz_high = int(parts[3].strip())
+                                    hz_step = float(parts[4].strip())
                                     db_values = [float(x) for x in parts[6:] if x.strip()]
 
                                     # Find peaks above noise floor
-                                    # RTL-SDR dongles have higher noise figures, so use permissive thresholds
                                     noise_floor = sum(db_values) / len(db_values) if db_values else -100
                                     threshold = noise_floor + 6  # Signal must be 6dB above noise
 

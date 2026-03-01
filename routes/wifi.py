@@ -20,7 +20,7 @@ from utils.dependencies import check_tool, get_tool_path
 from utils.logging import wifi_logger as logger
 from utils.process import is_valid_mac, is_valid_channel
 from utils.validation import validate_wifi_channel, validate_mac_address, validate_network_interface
-from utils.sse import format_sse
+from utils.sse import format_sse, sse_stream_fanout
 from utils.event_pipeline import process_event
 from data.oui import get_manufacturer
 from utils.constants import (
@@ -1135,26 +1135,19 @@ def get_wifi_networks():
 @wifi_bp.route('/stream')
 def stream_wifi():
     """SSE stream for WiFi events."""
-    def generate():
-        last_keepalive = time.time()
-        keepalive_interval = 30.0
+    def _on_msg(msg: dict[str, Any]) -> None:
+        process_event('wifi', msg, msg.get('type'))
 
-        while True:
-            try:
-                msg = app_module.wifi_queue.get(timeout=1)
-                last_keepalive = time.time()
-                try:
-                    process_event('wifi', msg, msg.get('type'))
-                except Exception:
-                    pass
-                yield format_sse(msg)
-            except queue.Empty:
-                now = time.time()
-                if now - last_keepalive >= keepalive_interval:
-                    yield format_sse({'type': 'keepalive'})
-                    last_keepalive = now
-
-    response = Response(generate(), mimetype='text/event-stream')
+    response = Response(
+        sse_stream_fanout(
+            source_queue=app_module.wifi_queue,
+            channel_key='wifi',
+            timeout=1.0,
+            keepalive_interval=30.0,
+            on_message=_on_msg,
+        ),
+        mimetype='text/event-stream',
+    )
     response.headers['Cache-Control'] = 'no-cache'
     response.headers['X-Accel-Buffering'] = 'no'
     response.headers['Connection'] = 'keep-alive'
@@ -1557,23 +1550,15 @@ def v2_deauth_stream():
         - deauth_error: An error occurred
         - keepalive: Periodic keepalive
     """
-    def generate():
-        last_keepalive = time.time()
-        keepalive_interval = SSE_KEEPALIVE_INTERVAL
-
-        while True:
-            try:
-                # Try to get from the dedicated deauth queue
-                msg = app_module.deauth_detector_queue.get(timeout=SSE_QUEUE_TIMEOUT)
-                last_keepalive = time.time()
-                yield format_sse(msg)
-            except queue.Empty:
-                now = time.time()
-                if now - last_keepalive >= keepalive_interval:
-                    yield format_sse({'type': 'keepalive'})
-                    last_keepalive = now
-
-    response = Response(generate(), mimetype='text/event-stream')
+    response = Response(
+        sse_stream_fanout(
+            source_queue=app_module.deauth_detector_queue,
+            channel_key='wifi_deauth',
+            timeout=SSE_QUEUE_TIMEOUT,
+            keepalive_interval=SSE_KEEPALIVE_INTERVAL,
+        ),
+        mimetype='text/event-stream',
+    )
     response.headers['Cache-Control'] = 'no-cache'
     response.headers['X-Accel-Buffering'] = 'no'
     response.headers['Connection'] = 'keep-alive'

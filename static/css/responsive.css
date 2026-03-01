@@ -428,7 +428,7 @@
 
     /* Visual panels should be scrollable, not clipped */
     .wifi-visuals,
-    .bt-visuals {
+    .bt-visuals-column {
         max-height: none !important;
         overflow: visible !important;
         margin-bottom: 15px;
@@ -444,7 +444,7 @@
 
     /* Visual panels should stack in single column on mobile when visible */
     .wifi-visuals,
-    .bt-visuals {
+    .bt-visuals-column {
         display: flex;
         flex-direction: column;
         gap: 10px;
@@ -464,6 +464,34 @@
 
     .wifi-visual-panel {
         grid-column: auto !important;
+    }
+
+    .bt-main-area {
+        flex-direction: column !important;
+        min-height: auto !important;
+    }
+
+    .bt-side-panels {
+        width: 100% !important;
+        flex-direction: column !important;
+    }
+
+    .bt-detail-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+
+    .bt-row-secondary {
+        padding-left: 0 !important;
+        white-space: normal !important;
+    }
+
+    .bt-row-actions {
+        padding-left: 0 !important;
+        justify-content: flex-start !important;
+    }
+
+    .bt-list-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
     }
 }
 
